@@ -1,0 +1,11 @@
+.claude/
+.agent-memory/
+.vscode/
+.venv/
+CLAUDE.md
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/

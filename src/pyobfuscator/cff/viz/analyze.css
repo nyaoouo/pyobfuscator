@@ -1,0 +1,57 @@
+:root {
+  --bg: #1e1e26; --panel: #262630; --ink: #d7d7e0; --muted: #8a8a9a;
+  --node: #2d2d3a; --node-sel: #3a3a55; --stroke: #555; --edge: #7aa2f7;
+  --edge-back: #e0af68; --hl: #4a3a1a; --accent: #9ece6a; --err: #f7768e;
+  --mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 system-ui, sans-serif; }
+h1 { font-size: 18px; margin: 0 0 12px; }
+.scope { background: var(--panel); border: 1px solid #33333f; border-radius: 8px;
+  margin: 0 0 18px; overflow: hidden; }
+.scope > header { padding: 8px 12px; background: #2b2b38; border-bottom: 1px solid #33333f;
+  display: flex; gap: 10px; align-items: baseline; }
+.scope > header .q { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+.scope > header .badge { font-size: 11px; color: var(--muted); }
+.scope > header .badge.err { color: var(--err); }
+.scope .body { display: flex; gap: 0; align-items: stretch; }
+.src, .out { flex: 0 0 27%; max-width: 27%; overflow: auto; border-right: 1px solid #33333f;
+  font-family: var(--mono); font-size: 12.5px; padding: 0 0 8px; max-height: 72vh; }
+.phead { position: sticky; top: 0; z-index: 1; background: #2b2b38; color: var(--muted);
+  font: 11px var(--mono); padding: 5px 10px; border-bottom: 1px solid #33333f; }
+.src .ln, .out .ln { display: flex; white-space: pre; padding: 0 10px; cursor: pointer; }
+.src .ln .n, .out .ln .n { color: var(--muted); width: 3.2em; text-align: right;
+  margin-right: 12px; user-select: none; flex: none; }
+.src .ln.hl, .out .ln.hl { background: var(--hl); }
+.graph { flex: 1 1 auto; overflow: auto; max-height: 72vh; padding: 8px; min-width: 0; }
+.unsupported { padding: 14px; color: var(--err); font-family: var(--mono); font-size: 12.5px; }
+.note { padding: 6px 12px; color: var(--muted); font: 11px var(--mono);
+  background: #2a2a36; border-bottom: 1px solid #33333f; }
+.detail { font-family: var(--mono); font-size: 12px; color: var(--muted);
+  padding: 6px 12px; border-top: 1px solid #33333f; white-space: pre-wrap; min-height: 1.5em; }
+/* svg nodes */
+.node rect { fill: var(--node); stroke: var(--stroke); stroke-width: 1; rx: 6; cursor: pointer; }
+.node.sel rect { fill: var(--node-sel); stroke: var(--edge); stroke-width: 2; }
+.node text { fill: var(--ink); font-family: var(--mono); font-size: 11px; }
+.node .bid { fill: var(--accent); font-weight: 700; }
+.node .term { fill: var(--edge); }
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.5; marker-end: url(#arrow); }
+.edge.back { stroke: var(--edge-back); stroke-dasharray: 5 3; marker-end: url(#arrow-back); }
+.edge-label { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+/* pass timeline */
+.timeline { background: var(--panel); border: 1px solid #33333f; border-radius: 8px; margin: 0 0 18px; overflow: hidden; }
+.timeline .steps { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #33333f; }
+.timeline .chip { display: flex; flex-direction: column; gap: 1px; padding: 5px 10px; border: 1px solid var(--stroke);
+  border-radius: 6px; background: var(--node); cursor: pointer; user-select: none; }
+.timeline .chip:hover { border-color: var(--edge); }
+.timeline .chip.sel { background: var(--node-sel); border-color: var(--edge); }
+.timeline .chip.flat { border-left: 3px solid var(--accent); }
+.timeline .chip.err { border-color: var(--err); }
+.timeline .chip .lab { font: 12px var(--mono); color: var(--ink); font-weight: 600; }
+.timeline .chip .sub { font: 10px var(--mono); color: var(--muted); }
+.timeline .chip.err .sub { color: var(--err); }
+.timeline .code-pane { font-family: var(--mono); font-size: 12.5px; max-height: 60vh; overflow: auto; padding: 6px 0 10px; }
+.timeline .code-pane .ln { display: flex; white-space: pre; padding: 0 12px; }
+.timeline .code-pane .ln .n { color: var(--muted); width: 3.2em; text-align: right; margin-right: 12px; user-select: none; flex: none; }
+.timeline .code-pane .ln.chg { background: var(--hl); }

@@ -1,0 +1,16 @@
+/* protect (shell) visualizer — layers + region-annotated launcher source.
+ * Loaded alongside analyze.css (shared --vars + .timeline styles). */
+.layers { background: var(--panel); border: 1px solid #33333f; border-radius: 8px; margin: 0 0 18px; overflow: hidden; }
+.layer-row { display: flex; align-items: center; gap: 10px; padding: 4px 12px; }
+.layer-row:last-child { padding-bottom: 10px; }
+.layer-row .lname { flex: 0 0 80px; font: 12px var(--mono); color: var(--accent); }
+.layer-row .track { flex: 1 1 auto; height: 16px; background: var(--node); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.layer-row .bar { display: block; height: 100%; background: var(--edge); }
+.layer-row .lmeta { flex: 0 0 auto; font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+
+.lpane { background: var(--panel); border: 1px solid #33333f; border-radius: 8px; margin: 0 0 18px;
+  font-family: var(--mono); font-size: 12.5px; max-height: 70vh; overflow: auto; }
+.lpane .ln { display: flex; white-space: pre; padding: 0 12px; }
+.lpane .ln .n { color: var(--muted); width: 3.6em; text-align: right; margin-right: 12px; user-select: none; flex: none; }
+.lpane .region { font: 11px var(--mono); color: var(--accent); background: #2a2a36;
+  padding: 4px 12px; margin-top: 4px; border-top: 1px solid #33333f; border-bottom: 1px solid #33333f; position: sticky; left: 0; }
