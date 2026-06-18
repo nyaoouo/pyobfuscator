@@ -2,6 +2,7 @@
 .agent-memory/
 .vscode/
 .venv/
+plans/
 CLAUDE.md
 __pycache__/
 *.pyc
