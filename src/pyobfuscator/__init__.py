@@ -18,7 +18,8 @@ from .cff.passes.localrename import LocalRenamePass
 from .cff.passes.stackcall import StackCallPass
 from .cff.passes.localcall import LocalCallPass
 from .cff.passes.dictindirect import DictIndirectPass
-from .cff.marker import local_call
+from .cff.passes.precompile import PrecompilePass
+from .cff.marker import local_call, precompile, precompile_arg
 from .cff.emit import emit
 from .cff.analyze import build_model, analyze_html, build_protect_model, protect_html
 from .cff.module_wrap import wrap_module
@@ -31,7 +32,8 @@ __all__ = [
     "obf_func", "obf_module", "obf_project",
     "ObfOptions", "ModuleObfOptions", "OutputFormat", "UnsupportedPolicy",
     "build_model", "analyze_html", "build_protect_model", "protect_html",
-    "local_call", "cache_tag", "sourceless_pyc_name", "MIN_SUPPORTED_PYTHON",
+    "local_call", "precompile", "precompile_arg",
+    "cache_tag", "sourceless_pyc_name", "MIN_SUPPORTED_PYTHON",
 ]
 
 # Lowest Python (major, minor) the obfuscator's OUTPUT targets — the single source of truth for the
@@ -97,8 +99,8 @@ def sourceless_pyc_name(module: str, *, tagged: bool = False) -> str:
 # through a fresh push/invoke stack — never the helper internals. Gated on the same
 # `hide_external_args` flag as the first pass. (Vault `_D[k](...)` calls are intentionally NOT
 # routed; see _is_routable_marked_call for why doing so would corrupt the first pass's push helper.)
-_FUNC_PIPELINE = Pipeline([LocalCallPass(), DictIndirectPass(), NormalizePass(), CmpHidePass(), LocalRenamePass(), StackCallPass(), SlotVarPass(), NameVaultPass(), ArchivePass(), DataObfPass(), StackCallPass(phase="post_vault"), FlattenPass()])
-_MODULE_PIPELINE = Pipeline([LocalCallPass(), DictIndirectPass(), NormalizePass(), CmpHidePass(), LocalRenamePass(), StackCallPass(), SlotVarPass(), NameVaultPass(), ArchivePass(), DataObfPass(), StackCallPass(phase="post_vault"), FlattenPass()])
+_FUNC_PIPELINE = Pipeline([PrecompilePass(), LocalCallPass(), DictIndirectPass(), NormalizePass(), CmpHidePass(), LocalRenamePass(), StackCallPass(), SlotVarPass(), NameVaultPass(), ArchivePass(), DataObfPass(), StackCallPass(phase="post_vault"), FlattenPass()])
+_MODULE_PIPELINE = Pipeline([PrecompilePass(), LocalCallPass(), DictIndirectPass(), NormalizePass(), CmpHidePass(), LocalRenamePass(), StackCallPass(), SlotVarPass(), NameVaultPass(), ArchivePass(), DataObfPass(), StackCallPass(phase="post_vault"), FlattenPass()])
 
 
 def _to_tree(src) -> ast.AST:

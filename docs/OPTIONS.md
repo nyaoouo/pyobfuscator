@@ -28,6 +28,109 @@ Two global properties hold for every flag:
 
 ---
 
+## 0. Build-time constants (`precompile` / `precompile_arg`)
+
+Two markers, exported from the top-level `pyobfuscator` package, that fold a computed value into the
+obfuscated output as a literal constant at **build time**. Both are identity / default at runtime, so
+un-obfuscated source still runs.
+
+```python
+from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
+
+def _scramble(text):
+    return tuple((ord(c) + i * 3) % 256 for i, c in enumerate(text))
+
+def license_ok(key):
+    # At build: _scramble(LICENSE_KEY) is evaluated; the tuple is folded in as a constant.
+    # No key literal or scramble algorithm appears on the constant side in the output.
+    return _scramble(key) == precompile(_scramble(precompile_arg("LICENSE_KEY")))
+
+out = obf_module(src, ModuleObfOptions(
+    precompile_args={"LICENSE_KEY": "PROD-KEY-1234"},
+    const_archive=True,   # the folded constant is then encrypted
+))
+```
+
+### `precompile(expr)`
+
+At build: the obfuscator evaluates `expr` and replaces the `precompile(...)` call with the resulting
+constant. The folded constant then flows through the literal-obfuscation passes (`const_archive` /
+`obf_ints` / `obf_strings`) and gets encrypted — so both the input and the algorithm applied to it
+disappear from the output.
+
+At runtime: identity (`return x`), so un-obfuscated source runs.
+
+**Constraints:** `expr` must be evaluable at build time (module-level functions / imports / literals
+— NOT function parameters). The result must be literal-representable (see fail-loud list below).
+Build-time evaluation runs the module in an **isolated subprocess** (side effects and crashes are
+contained; the subprocess inherits the build env's `sys.path`).
+
+### `precompile_arg(key[, default])`
+
+At build: replaced with the value the build script injects in `options.precompile_args[key]` (folded
+as a constant), or `default` if `key` is absent.
+
+At runtime: returns `default` (or `None` if no default is given), so un-obfuscated source runs with
+dev placeholders.
+
+**Required vs optional:**
+
+- **1-argument form `precompile_arg("KEY")`** — required: build fails loudly if `"KEY"` is not in
+  `precompile_args`. Use this to keep a secret exclusively in the build script (it will not appear
+  anywhere in the source).
+- **2-argument form `precompile_arg("KEY", default)`** — optional: `default` is used when `"KEY"` is
+  absent. Note that the default then appears in the source; use the 1-argument form if the default
+  must also be hidden.
+
+**Intentional behavior difference:** when the injected build value differs from the default, the
+obfuscated output behaves differently from a plain source run (runtime uses the default). This is the
+feature, not a bug — injecting a production key makes the obfuscated binary use it, while the plain
+source runs with the dev default.
+
+Nested composition is supported: `precompile(_scramble(precompile_arg("KEY")))` works — `precompile_arg`
+resolves inside the subprocess eval, and the outer `precompile` folds the result.
+
+### `ObfOptions.precompile_args: dict` (default `{}`)
+
+Build-script-injected values keyed by string. Values must be literal-representable constants (the same
+constraint as `precompile` results). Flows unchanged through `obf_func` / `obf_module` / `obf_project`
+(it is a base-`ObfOptions` field).
+
+### `ObfOptions.precompile_timeout: float` (default `30.0`)
+
+Per-unit timeout (seconds) for the build-eval subprocess. Raise it for slow build-time computations; a
+timeout fails the build loudly. Build-eval results are **cached** per process by (module source +
+injected args + expressions), so identical re-builds (determinism checks, partial-update rebuilds,
+`obf_project` re-runs in one process) reuse the result without re-spawning the subprocess.
+
+### Composition with encryption
+
+`PrecompilePass` runs **first** in the pipeline, before any literal-obfuscation passes. The folded
+constant is then encrypted by whichever of `const_archive` / `obf_ints` / `obf_strings` you enable.
+Enable `const_archive=True` for the strongest result (the constant is pooled into an encrypted blob).
+
+### Determinism
+
+`precompile` expressions should be **pure** (same inputs → same output). A non-deterministic
+expression (e.g. reading a timestamp or random value) produces a non-reproducible build. This is not
+enforced — it is the caller's responsibility.
+
+### Fail-loud conditions
+
+The build raises `ValueError` for:
+
+| Condition | Error |
+|---|---|
+| `expr` references a function parameter or other name not available at module-scope eval | Subprocess eval error |
+| `precompile(...)` result is not literal-representable (e.g. a custom class instance) | Result validation error |
+| `precompile` called with arity ≠ 1 | Arity error |
+| `precompile_arg` called with arity ∉ {1, 2}, or with a non-string-literal key | Validation error |
+| `precompile_arg("KEY")` (1-arg, required) with `"KEY"` absent from `precompile_args` | Missing required build arg |
+| `precompile_args` value is not literal-representable | Options validation error |
+| Subprocess times out (> 30 s) | Timeout error |
+
+---
+
 ## 1. Core / output
 
 | Option (default) | Effect | Impact | Limitations |
@@ -277,6 +380,8 @@ path):
 
 | If you set… | You must also set… | Otherwise |
 |---|---|---|
+| `precompile_arg("KEY")` (1-arg) used | `"KEY"` present in `precompile_args` | `ValueError` |
+| `precompile(expr)` used | `expr` evaluable at module scope (not a function parameter) | `ValueError` (subprocess eval error) |
 | `attest=True` | `pack_body=True` **and** `key_from_cff=True` | `ValueError` |
 | `attest=True` | `output` in `{"text", "pyc"}` | `ValueError` |
 | `body_cohash=True` | `attest=True` | `ValueError` |

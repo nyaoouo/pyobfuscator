@@ -53,6 +53,8 @@ class ObfOptions:
     strip_debug: bool = False
     on_unsupported: UnsupportedPolicy = UnsupportedPolicy.STRICT
     seed: int | None = None
+    precompile_args: dict = field(default_factory=dict)  # build-script-injected values for precompile_arg(key, default): {key: literal-representable value}. Folded in at build (the value never appears in the source). See the precompile/precompile_arg markers.
+    precompile_timeout: float = 30.0  # seconds for the precompile build-eval subprocess (per unit); raise for slow build-time computations
     emit_sourcemap: bool = False  # opt-in: assemble a JSON deobfuscation map into a caller-supplied sink (obf_*/emit `sourcemap_out`). NEVER embedded in the artifact; output stays byte-identical when on
     max_block_stmts: int | None = None
     min_blocks: int = 2  # skip flattening functions with fewer basic blocks (no real control flow)

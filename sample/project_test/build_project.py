@@ -29,7 +29,7 @@ from pyobfuscator import obf_project, ModuleObfOptions
 SRC = os.path.join(HERE, "src")
 DIST = os.path.join(HERE, "dist")
 SEED = 2026
-KEY = "PYOBF-PRO-2026"
+KEY = "PYOBF-PRO-2026"   # default license key injected at build; override with --key on the CLI
 ENTRY = os.path.join(DIST, "main.py")
 SECRET = os.path.join(DIST, "app", "secret.py")
 
@@ -39,6 +39,9 @@ def _opts():
     # anti-trace honeypot (a tracer at load -> decoy). obf_imports hides the launcher's own imports.
     return ModuleObfOptions(
         output="text", seed=SEED,
+        # Build-time injection: app/secret.py reads the license key via precompile_arg("LICENSE_KEY")
+        # and folds _scramble(key) through precompile, so the key never appears in the shipped source.
+        precompile_args={"LICENSE_KEY": KEY},
         pack_body=True, key_from_cff=True, integrity_selfcheck=True, pack_decoy=True,
         attest=True, attest_runtime_bind=True, detect_audit=True, anti_trace_neuter=True,
         detect_trace=True, key_binds_env=True, obf_imports=True, compress_output=True, compress_rounds=5)
@@ -138,7 +141,7 @@ def main():
     _build(SRC, DIST)
     out, rc = _run(ENTRY, KEY, "hello")
     check(rc == 0 and "OK:OLLEH" in out, "genuine: correct key", repr(out.strip()))
-    out_d, _ = _run(ENTRY, "WRONG-KEY", "hello")
+    out_d, _ = _run(ENTRY, KEY + "-WRONG", "hello")   # any key != the injected one
     check("DENIED" in out_d and "OK:" not in out_d, "genuine: wrong key -> DENIED", repr(out_d.strip()))
 
     # 3. update ONLY secret: rebuild a modified secret (same seed) into a temp dist, swap its
@@ -201,4 +204,12 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    _p = argparse.ArgumentParser(description="Build + self-verify the multi-module demo.")
+    _p.add_argument("--key", default=KEY,
+                    help="license key injected at build time via precompile_arg('LICENSE_KEY') "
+                         "(default: %(default)s). The key is folded into the encrypted body and never "
+                         "appears in the shipped source.")
+    KEY = _p.parse_args().key   # build-time injection driven by the CLI (the CI/build supplies the secret)
     raise SystemExit(main())

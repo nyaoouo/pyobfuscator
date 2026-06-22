@@ -99,6 +99,40 @@ A runnable demo is at `sample/project_test/` (build with `build_project.py`). Se
 **[`docs/OPTIONS.md`](docs/OPTIONS.md)** (§12b) for the full parameter reference including
 `import_hook` and `shared_oracle_decouple`.
 
+### Build-time constants (`precompile` / `precompile_arg`)
+
+Two markers let you fold a computed value into the obfuscated output as an encrypted constant at build
+time. Both are identity / default at runtime, so un-obfuscated source still runs.
+
+```python
+from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
+
+def _scramble(text):
+    return tuple((ord(c) + i * 3) % 256 for i, c in enumerate(text))
+
+def license_ok(key):
+    # At build: _scramble("PROD-KEY") is evaluated; the tuple is folded in and encrypted.
+    # Neither the key literal nor the scramble algorithm appears on the constant side in the output.
+    return _scramble(key) == precompile(_scramble(precompile_arg("LICENSE_KEY")))
+
+out = obf_module(open("secret.py").read(), ModuleObfOptions(
+    precompile_args={"LICENSE_KEY": "PROD-KEY-1234"},
+    const_archive=True,
+))
+```
+
+- **`precompile(expr)`** — evaluates `expr` at build (in an isolated subprocess) and replaces the call
+  with the resulting constant. `expr` must be module-scope-evaluable (not a function parameter).
+- **`precompile_arg("KEY")`** — required: replaced with `precompile_args["KEY"]`; build fails loudly if
+  absent. **`precompile_arg("KEY", default)`** — optional: uses `default` when `"KEY"` is absent.
+  The key lives only in the build script; it never appears in the source.
+- **`ObfOptions.precompile_args`** — dict passed to `obf_func` / `obf_module` / `obf_project` with
+  the injected values.
+
+The folded constant then flows through `const_archive` / `obf_ints` / `obf_strings` and gets
+encrypted. See **[`docs/OPTIONS.md`](docs/OPTIONS.md)** (§0) for the full reference including
+fail-loud conditions and determinism notes.
+
 ---
 
 ## What's in the box

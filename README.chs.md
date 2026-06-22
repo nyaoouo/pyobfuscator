@@ -90,6 +90,33 @@ manifest = obf_project(
 
 可运行的演示位于 `sample/project_test/`（通过 `build_project.py` 构建）。完整参数说明（包括 `import_hook` 和 `shared_oracle_decouple`）详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**。
 
+### 构建期常量（`precompile` / `precompile_arg`）
+
+两个标记函数可在构建期将计算结果作为加密常量折叠到混淆产物中。运行时两者均为恒等 / 返回默认值，未混淆的源码可正常运行。
+
+```python
+from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
+
+def _scramble(text):
+    return tuple((ord(c) + i * 3) % 256 for i, c in enumerate(text))
+
+def license_ok(key):
+    # 构建期：_scramble("PROD-KEY") 被求值；结果元组被折叠进来并加密。
+    # 输出的常量侧不出现密钥字面量，也不出现 scramble 算法。
+    return _scramble(key) == precompile(_scramble(precompile_arg("LICENSE_KEY")))
+
+out = obf_module(open("secret.py").read(), ModuleObfOptions(
+    precompile_args={"LICENSE_KEY": "PROD-KEY-1234"},
+    const_archive=True,
+))
+```
+
+- **`precompile(expr)`** — 在构建期（隔离子进程中）对 `expr` 求值，并将调用替换为结果常量。`expr` 必须在模块作用域可求值（不能是函数参数）。
+- **`precompile_arg("KEY")`** — 必填形式：替换为 `precompile_args["KEY"]`；若缺失则构建大声报错。**`precompile_arg("KEY", default)`** — 可选形式：`"KEY"` 不存在时使用 `default`。密钥仅存在于构建脚本中，源码中不会出现。
+- **`ObfOptions.precompile_args`** — 传递给 `obf_func` / `obf_module` / `obf_project` 的注入值字典。
+
+折叠后的常量随即流经 `const_archive` / `obf_ints` / `obf_strings` 并被加密。完整参考（包括显式报错条件和确定性说明）详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**（§0）。
+
 ---
 
 ## 功能一览

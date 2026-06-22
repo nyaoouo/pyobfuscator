@@ -63,18 +63,19 @@ classify_files(root, entry, protect)   # → {rel_path → Role}
 `_FUNC_PIPELINE` and `_MODULE_PIPELINE` (identical order, defined in `__init__.py`) run these passes;
 each enforces a default-deny node allowlist (`gate.py`) before transforming:
 
-1. **`LocalCallPass`** — handle `@local_call` (inline/rename marked helpers, strip the marker import).
-2. **`DictIndirectPass`** — route internal-function references through a per-scope `_D[key]` dict (`dict_indirect`).
-3. **`NormalizePass`** — desugar `match` → if-chains; optional `return_var` rewrite (structural patterns fail-loud).
-4. **`CmpHidePass`** — hide integer `==`/`!=` constants behind a bijective digest (`hide_compares`).
-5. **`LocalRenamePass`** — rename user params/locals/comprehension targets to fresh names (always on).
-6. **`StackCallPass`** (main phase) — route eligible call args through a hidden `threading.local` stack (`stack_calls`/`hide_external_args`).
-7. **`SlotVarPass`** — map safe locals to `_slots[i]` (`slot_vars`).
-8. **`NameVaultPass`** — route builtins + simple imports through a per-module vault (`name_vault`/`name_vault_attrs`).
-9. **`ArchivePass`** — pool all literals into one encrypted blob + `_get` accessor (`const_archive`).
-10. **`DataObfPass`** — pow/RSA-style codec for `str`/`bytes` literals (`obf_strings`).
-11. **`StackCallPass`** (`phase="post_vault"`) — second, targeted arg-hiding pass over the archive `_get(...)` accessor call sites only.
-12. **`FlattenPass`** — control-flow flatten every function via `cfg.flatten_function`, threading all feature RNGs/flags.
+1. **`PrecompilePass`** — evaluate `precompile(expr)` / `precompile_arg(key[, dflt])` markers at build time and replace each call with the resulting constant. Runs **first** so folded constants then flow through all downstream literal-obfuscation passes. Marker resolution runs in an isolated subprocess for `precompile` expressions (so module-level code is exec'd safely); standalone `precompile_arg` with a literal key/default resolves in-process. Strips the marker imports after folding.
+2. **`LocalCallPass`** — handle `@local_call` (inline/rename marked helpers, strip the marker import).
+3. **`DictIndirectPass`** — route internal-function references through a per-scope `_D[key]` dict (`dict_indirect`).
+4. **`NormalizePass`** — desugar `match` → if-chains; optional `return_var` rewrite (structural patterns fail-loud).
+5. **`CmpHidePass`** — hide integer `==`/`!=` constants behind a bijective digest (`hide_compares`).
+6. **`LocalRenamePass`** — rename user params/locals/comprehension targets to fresh names (always on).
+7. **`StackCallPass`** (main phase) — route eligible call args through a hidden `threading.local` stack (`stack_calls`/`hide_external_args`).
+8. **`SlotVarPass`** — map safe locals to `_slots[i]` (`slot_vars`).
+9. **`NameVaultPass`** — route builtins + simple imports through a per-module vault (`name_vault`/`name_vault_attrs`).
+10. **`ArchivePass`** — pool all literals into one encrypted blob + `_get` accessor (`const_archive`).
+11. **`DataObfPass`** — pow/RSA-style codec for `str`/`bytes` literals (`obf_strings`).
+12. **`StackCallPass`** (`phase="post_vault"`) — second, targeted arg-hiding pass over the archive `_get(...)` accessor call sites only.
+13. **`FlattenPass`** — control-flow flatten every function via `cfg.flatten_function`, threading all feature RNGs/flags.
 
 After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), then (for text/pyc with
 `pack_body`) `pack_module`, then `emit`.
@@ -184,9 +185,9 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
 - **Interacts with:** no intra-package imports; consumed by `gate` and passes.
 
 ### `cff/marker.py`
-- **Role:** The `@local_call` marker decorator (identity at runtime; recognized + stripped by the engine).
-- **Provides:** `local_call(fn)`.
-- **Interacts with:** acted on by `LocalCallPass`.
+- **Role:** Build-time marker functions (identity / default at runtime; recognized + acted on by the engine).
+- **Provides:** `local_call(fn)` (identity decorator); `precompile(x)` (returns `x`); `precompile_arg(key, default=None)` (returns `default`). All three are exported from the top-level `pyobfuscator` package.
+- **Interacts with:** `local_call` is acted on by `LocalCallPass`; `precompile`/`precompile_arg` are acted on by `PrecompilePass`.
 
 ### `cff/directives.py`
 - **Role:** Parse `# pyobf:` inline source directives and bind them to the nearest `def`/`class`.
@@ -233,12 +234,17 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
   pass), and a registry.
 - **Provides:** `Pass` (Protocol), **`Pipeline`** (`run(tree, options)`), `register`, `get`, `all_passes`.
 
+### `passes/precompile.py`
+- **Role:** Build-time partial evaluation of `precompile` / `precompile_arg` markers. Runs **first** in the pipeline. For each outermost marker call it computes a constant at build time and replaces the call with that constant; the downstream literal-obfuscation passes then encrypt it.
+- **Provides:** `PrecompilePass`; `_build_marker_resolver` (alias-aware marker detection from `from pyobfuscator import ...` and `import pyobfuscator` forms); `_Collect` (outermost marker-call collector, does not descend into nested marker args); `_Replace` (AST node replacer); `_strip_marker_imports` (removes the now-folded marker names from `from pyobfuscator import ...`); `_literal_node` (validates and parses a repr string); `_run_subprocess` (isolated-subprocess evaluation driver, JSON in/out); `_inproc_arg` (fast in-process resolution for standalone `precompile_arg` with literal key/default).
+- **Interacts with:** must run before `LocalCallPass` and all literal-obfuscation passes; reads `options.precompile_args`; uses a subprocess (`subprocess.run`) to exec the module source and eval marker expressions in isolation (30 s timeout). Tolerates pre-normalization `match` nodes in `supports()`.
+
 ### `passes/localcall.py`
 - **Role:** Handle `@local_call` helpers — inline at a single call site (alpha-renamed) or rename to an
   opaque fresh name; strip the marker decorator + dead import.
 - **Provides:** `LocalCallPass`; helpers `_collect_marked`, `_AlphaRenamer`, `_WholeTreeRenamer`,
   `_resolve_positional`, `_remove_dead_marker_import`.
-- **Interacts with:** runs first; tolerates pre-normalization `match` nodes in `supports()`.
+- **Interacts with:** runs second (after `PrecompilePass`); tolerates pre-normalization `match` nodes in `supports()`.
 
 ### `passes/dictindirect.py`
 - **Role:** Route internal-function (and const-like global) references through a per-scope `_D[key]`

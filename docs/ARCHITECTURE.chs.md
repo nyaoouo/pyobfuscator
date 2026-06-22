@@ -56,18 +56,19 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 
 `_FUNC_PIPELINE` 和 `_MODULE_PIPELINE`（顺序相同，定义于 `__init__.py`）按以下顺序运行各 Pass；每个 Pass 在变换之前都会通过 `gate.py` 强制执行默认拒绝节点白名单：
 
-1. **`LocalCallPass`** — 处理 `@local_call`（内联/重命名被标记的辅助函数，去除标记导入）。
-2. **`DictIndirectPass`** — 将内部函数引用通过每作用域的 `_D[key]` 字典（`dict_indirect`）进行路由。
-3. **`NormalizePass`** — 将 `match` 脱糖为 if 链；可选的 `return_var` 改写（结构模式大声报错）。
-4. **`CmpHidePass`** — 用双射摘要（`hide_compares`）隐藏整数 `==`/`!=` 常量。
-5. **`LocalRenamePass`** — 将用户参数 / 局部变量 / 推导式目标重命名为新鲜名称（始终开启）。
-6. **`StackCallPass`**（主阶段）— 将符合条件的调用参数通过隐藏的 `threading.local` 栈路由（`stack_calls`/`hide_external_args`）。
-7. **`SlotVarPass`** — 将安全的局部变量映射到 `_slots[i]`（`slot_vars`）。
-8. **`NameVaultPass`** — 将内置名称 + 简单导入通过每模块的 vault 路由（`name_vault`/`name_vault_attrs`）。
-9. **`ArchivePass`** — 将所有字面量汇入一个加密 blob + `_get` 访问器（`const_archive`）。
-10. **`DataObfPass`** — 对 `str`/`bytes` 字面量使用 pow/RSA 风格的编解码器（`obf_strings`）。
-11. **`StackCallPass`**（`phase="post_vault"`）— 第二轮、针对性的参数隐藏 Pass，仅覆盖归档 `_get(...)` 访问器的调用点。
-12. **`FlattenPass`** — 通过 `cfg.flatten_function` 对每个函数进行控制流平坦化，并穿透所有特性 RNG / 标志。
+1. **`PrecompilePass`** — 在构建期对 `precompile(expr)` / `precompile_arg(key[, dflt])` 标记求值，并将每次调用替换为结果常量。**最先运行**，确保折叠后的常量随即流经所有下游字面量混淆 Pass。`precompile` 表达式的求值在隔离子进程中完成（模块级代码被安全 exec）；单独的、具有字面量 key/default 的 `precompile_arg` 在进程内解析。折叠完成后去除标记导入。
+2. **`LocalCallPass`** — 处理 `@local_call`（内联/重命名被标记的辅助函数，去除标记导入）。
+3. **`DictIndirectPass`** — 将内部函数引用通过每作用域的 `_D[key]` 字典（`dict_indirect`）进行路由。
+4. **`NormalizePass`** — 将 `match` 脱糖为 if 链；可选的 `return_var` 改写（结构模式大声报错）。
+5. **`CmpHidePass`** — 用双射摘要（`hide_compares`）隐藏整数 `==`/`!=` 常量。
+6. **`LocalRenamePass`** — 将用户参数 / 局部变量 / 推导式目标重命名为新鲜名称（始终开启）。
+7. **`StackCallPass`**（主阶段）— 将符合条件的调用参数通过隐藏的 `threading.local` 栈路由（`stack_calls`/`hide_external_args`）。
+8. **`SlotVarPass`** — 将安全的局部变量映射到 `_slots[i]`（`slot_vars`）。
+9. **`NameVaultPass`** — 将内置名称 + 简单导入通过每模块的 vault 路由（`name_vault`/`name_vault_attrs`）。
+10. **`ArchivePass`** — 将所有字面量汇入一个加密 blob + `_get` 访问器（`const_archive`）。
+11. **`DataObfPass`** — 对 `str`/`bytes` 字面量使用 pow/RSA 风格的编解码器（`obf_strings`）。
+12. **`StackCallPass`**（`phase="post_vault"`）— 第二轮、针对性的参数隐藏 Pass，仅覆盖归档 `_get(...)` 访问器的调用点。
+13. **`FlattenPass`** — 通过 `cfg.flatten_function` 对每个函数进行控制流平坦化，并穿透所有特性 RNG / 标志。
 
 流水线结束后，`obf_module` 依次运行 `wrap_module`（平坦化模块体），然后（在 text/pyc 且启用 `pack_body` 时）运行 `pack_module`，最后运行 `emit`。
 
@@ -139,9 +140,9 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 - **交互：** 无包内导入；被 `gate` 和各 Pass 消费。
 
 ### `cff/marker.py`
-- **职责：** `@local_call` 标记装饰器（运行时为恒等函数；由引擎识别并去除）。
-- **对外接口：** `local_call(fn)`。
-- **交互：** 由 `LocalCallPass` 处理。
+- **职责：** 构建期标记函数（运行时为恒等 / 返回默认值；由引擎识别并处理）。
+- **对外接口：** `local_call(fn)`（恒等装饰器）；`precompile(x)`（返回 `x`）；`precompile_arg(key, default=None)`（返回 `default`）。三者均从顶层 `pyobfuscator` 包导出。
+- **交互：** `local_call` 由 `LocalCallPass` 处理；`precompile`/`precompile_arg` 由 `PrecompilePass` 处理。
 
 ### `cff/directives.py`
 - **职责：** 解析 `# pyobf:` 行内源码指令，并将其绑定到最近的 `def`/`class`。
@@ -182,10 +183,15 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 - **职责：** Pass 框架：`Pass` 协议、`Pipeline` 运行器（对每个 Pass 依次执行 `enforce` 和 `transform`），以及注册表。
 - **对外接口：** `Pass`（Protocol）、**`Pipeline`**（`run(tree, options)`）、`register`、`get`、`all_passes`。
 
+### `passes/precompile.py`
+- **职责：** 对 `precompile` / `precompile_arg` 标记进行构建期偏求值。在流水线中**最先运行**。对每个最外层标记调用，在构建期计算出常量后替换该调用；下游字面量混淆 Pass 随即对其加密。
+- **对外接口：** `PrecompilePass`；`_build_marker_resolver`（别名感知的标记检测，支持 `from pyobfuscator import ...` 和 `import pyobfuscator` 形式）；`_Collect`（最外层标记调用收集器，不递归进入嵌套标记参数）；`_Replace`（AST 节点替换器）；`_strip_marker_imports`（从 `from pyobfuscator import ...` 中移除已折叠的标记名）；`_literal_node`（验证并解析 repr 字符串）；`_run_subprocess`（隔离子进程求值驱动器，JSON 输入/输出）；`_inproc_arg`（对具有字面量 key/default 的独立 `precompile_arg` 的快速进程内解析）。
+- **交互：** 必须在 `LocalCallPass` 和所有字面量混淆 Pass 之前运行；读取 `options.precompile_args`；使用子进程（`subprocess.run`）在隔离环境中 exec 模块源码并 eval 标记表达式（30 秒超时）。在 `supports()` 中容忍规范化前的 `match` 节点。
+
 ### `passes/localcall.py`
 - **职责：** 处理 `@local_call` 辅助函数 — 在单个调用点内联（alpha 重命名）或重命名为不透明新鲜名称；去除标记装饰器 + 死导入。
 - **对外接口：** `LocalCallPass`；辅助函数 `_collect_marked`、`_AlphaRenamer`、`_WholeTreeRenamer`、`_resolve_positional`、`_remove_dead_marker_import`。
-- **交互：** 最先运行；在 `supports()` 中容忍规范化前的 `match` 节点。
+- **交互：** 在 `PrecompilePass` 之后（第二个）运行；在 `supports()` 中容忍规范化前的 `match` 节点。
 
 ### `passes/dictindirect.py`
 - **职责：** 将内部函数（以及常量式全局变量）引用通过每作用域的 `_D[key]` 字典（`dict_indirect`）进行路由。
