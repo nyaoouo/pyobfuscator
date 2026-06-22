@@ -60,6 +60,20 @@ def MAGIC(seed: int) -> int:
     return rng.randrange(1, 1 << 64)
 
 
+# Distinct salt for the multi-module shared-runtime decrypt-function name (obf_project). Kept apart
+# from the oracle/MAGIC derivations so the names never collide.
+_DEC_SEED = 0xDEC0DE5A_77E51D00
+
+
+def dec_name(seed: int) -> str:
+    """Name of the shared-runtime decrypt function the entry publishes into ``builtins`` and every
+    satellite stub calls (multi-module ``obf_project``). Seed-derived so the entry and all satellites
+    agree without extra params; double-underscore dunder form so finalize_names leaves it untouched
+    (like the oracle name). Reconstructed from char codes at the call sites (no greppable literal)."""
+    rng = random.Random((seed or 0) ^ _DEC_SEED)
+    return f"__pyobf_dec_{rng.randrange(0, 1 << 32):08x}__"
+
+
 # ---- Body self-cohash (PYC-only) ----------------------------------------------------------------
 # The body computes H = FNV-1a(guard.__code__.co_code) at each gated unit and folds it into the
 # oracle-gated transition (`state = O(state) ^ H ^ corr`). protect bakes the correction so the

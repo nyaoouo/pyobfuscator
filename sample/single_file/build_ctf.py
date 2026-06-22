@@ -18,7 +18,7 @@ import sys, os, io, ast, marshal, contextlib, builtins, subprocess, tempfile, ba
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)                                   # for ai_markers
-sys.path.insert(0, os.path.join(HERE, "..", "pyobfuscator", "src"))  # pyobfuscator lives in the parent dir
+sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))  # <repo>/src (the pyobfuscator package)
 
 from pyobfuscator import obf_module, ModuleObfOptions, ObfOptions, analyze_html, protect_html
 from pyobfuscator.cff.sourcemap import dump_sourcemap

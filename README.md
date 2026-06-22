@@ -70,6 +70,35 @@ obf_module(src, ModuleObfOptions(output="pyc", seed=1, protect_level="full"))
 
 See **[`docs/OPTIONS.md`](docs/OPTIONS.md)** for every option's effect, impact, and limitations.
 
+### Multi-module projects
+
+`obf_project` obfuscates an entire source tree at once: one entry module publishes a shared
+decryption runtime into `builtins`; each protected module ships as a lightweight stub + encrypted
+blob that runs through it. Plaintext files are copied verbatim.
+
+```python
+from pyobfuscator import obf_project, ModuleObfOptions
+
+manifest = obf_project(
+    root="src/myapp",
+    out="dist/myapp",
+    entry="main.py",                          # publishes the shared runtime
+    protect=["app/secret.py", "app/logic.py"],# obfuscated as satellites
+    # app/__init__.py is not listed → copied plaintext
+    options=ModuleObfOptions(
+        output="pyc", seed=42,
+        pack_body=True, key_from_cff=True,
+        attest=True, pack_decoy=True,
+    ),
+)
+# Run: python dist/myapp/main.pyc
+# Import works too: import app.secret   (loads app/secret.pyc transparently)
+```
+
+A runnable demo is at `sample/project_test/` (build with `build_project.py`). See
+**[`docs/OPTIONS.md`](docs/OPTIONS.md)** (§12b) for the full parameter reference including
+`import_hook` and `shared_oracle_decouple`.
+
 ---
 
 ## What's in the box
@@ -125,16 +154,3 @@ pyobfuscator/
 The suite is differential (compile original vs obfuscated, compare behaviour across seeds) and
 structural (assert specific transforms). Wrong-path / dump-replay checks run in killable subprocesses,
 since a wrong dispatcher state can busy-loop.
-
-## Demo
-
-A worked end-to-end example (a small challenge built with the full obfuscation + protection stack, a
-realistic decoy, and verification that an untraced run behaves normally while a traced/dumped run is
-diverted to the decoy) lives in a separate build workflow outside the shipped package — the policy and
-secrets (decoy, markers) belong in the build workflow, never in the library.
-
-## Status
-
-The obfuscation pipeline and the protection stack are complete and independently verified; the library
-is on the `feat/implementation` branch (not yet merged to master). Out of scope here: native / driver
-protection layers (the live in-process dump ceiling noted in the threat model).

@@ -20,7 +20,8 @@ from dataclasses import replace
 
 from ..cff.names import Namer, collect_names
 from ..cff.attest import (mix as _attest_mix, oracle_name as _attest_oracle_name,
-                          MAGIC as _attest_MAGIC, name_to_charcode_expr as _attest_name_expr)
+                          MAGIC as _attest_MAGIC, name_to_charcode_expr as _attest_name_expr,
+                          dec_name as _attest_dec_name)
 from ..options import ObfOptions, OutputFormat
 from .cipher import (
     _MASK, _TEMP_KEY, _SALT_SEL, _SALT_KEY, _SALT_DECOY, _BI_MAGIC, _D_MAGIC, _P_MAGIC,
@@ -167,7 +168,7 @@ def _emit_bi(checks, spot, namer, n_bt, n_bi, n_g=None):
     return stmts
 
 
-def _flatten_launcher(module: ast.Module, options, top_defs=()) -> ast.Module:
+def _flatten_launcher(module: ast.Module, options, top_defs=(), disable_call_routing=False) -> ast.Module:
     # Flatten the launcher so the fold/detection live inside the dispatcher (control-flow tamper
     # ⇒ wrong key). obf_strings=False so the encrypted blob is not powmod-expanded; pack_body=False
     # to avoid recursion. attest=False so the launcher itself is NOT gated (the oracle attestation
@@ -187,13 +188,15 @@ def _flatten_launcher(module: ast.Module, options, top_defs=()) -> ast.Module:
     # launcher's own glue routes correctly AND pools the detect_* attr-name strings (sys.settrace /
     # gettrace / monitoring.set_events / addaudithook / breakpoint ...) into the encrypted archive,
     # hiding the anti-debug surface that was previously plaintext in the launcher.
-    if _needs_audit_cell(options):
+    if _needs_audit_cell(options) or disable_call_routing:
         # The anti-TOCTOU machinery (audit-hook lambda, oracle closure with gt()/type(pw) calls,
         # neuter guard) lives in lambdas/closures the call-routing transforms corrupt (they descend
         # into the closures and reroute external-call args through the thread-local arg stack ->
-        # AttributeError at runtime). Disable those flags FOR THE LAUNCHER ONLY when the machinery
-        # is present; the launcher's strength still comes from the dispatcher flatten + key fold +
-        # integrity, not from call-arg hiding. The body keeps all flags.
+        # AttributeError at runtime). The multi-module runtime-publish block (`disable_call_routing`)
+        # has the same shape (a setattr whose arg is a factory call with char-code args). Disable
+        # those flags FOR THE LAUNCHER ONLY when such machinery is present; the launcher's strength
+        # still comes from the dispatcher flatten + key fold + integrity, not call-arg hiding. The
+        # body keeps all flags.
         lopts = replace(lopts, stack_calls=False, hide_external_args=False, split_calls=False,
                         dict_indirect=False, slot_vars=False)
     module = _MODULE_PIPELINE.run(module, lopts)
@@ -322,25 +325,32 @@ def _patch_attest_markers(tree: ast.Module, requests: list, s_correct: int,
 
 
 def pack_module(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dict | None = None,
-                decoy_tree: ast.AST | None = None) -> ast.AST:
+                decoy_tree: ast.AST | None = None, publish_runtime: bool = False,
+                shared_oracle_decouple: bool = False, runtime_registry: dict | None = None) -> ast.AST:
     """Return a launcher Module whose execution reproduces `tree` (a Module) in its own
     globals. Only meaningful for Module trees; returns `tree` unchanged otherwise.
 
     When emit_sourcemap is on and `sourcemap_out` is supplied, the BODY layer map and the readable
     body payload (the obfuscated-but-not-yet-encrypted source that lives inside the blob) are placed
-    in the sink as `sourcemap_out['body']` / `['body_src']`."""
+    in the sink as `sourcemap_out['body']` / `['body_src']`.
+
+    `publish_runtime` (multi-module entry): additionally publish a shared decrypt function into
+    `builtins` for satellite stubs (see `_build_runtime_publish_stmts`). `shared_oracle_decouple`
+    selects alpha (build-constant selector) over the default beta (runtime selector) binding."""
     if not isinstance(tree, ast.Module):
         return tree
-    module, guard_inject, _regions, do_flatten = _assemble_launcher(tree, options,
-                                                                    sourcemap_out=sourcemap_out,
-                                                                    decoy_tree=decoy_tree)
+    module, guard_inject, _regions, do_flatten = _assemble_launcher(
+        tree, options, sourcemap_out=sourcemap_out, decoy_tree=decoy_tree,
+        publish_runtime=publish_runtime, shared_oracle_decouple=shared_oracle_decouple,
+        runtime_registry=runtime_registry)
     if not do_flatten:
         return module
-    return _flatten_launcher(module, options, guard_inject)
+    return _flatten_launcher(module, options, guard_inject, disable_call_routing=publish_runtime)
 
 
 def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dict | None = None,
-                       decoy_tree: ast.AST | None = None):
+                       decoy_tree: ast.AST | None = None, publish_runtime: bool = False,
+                       shared_oracle_decouple: bool = False, runtime_registry: dict | None = None):
     """Build the launcher module BEFORE the final flatten. Returns
     `(module, guard_inject, regions, do_flatten)`:
       - `module`        the assembled (pre-flatten) launcher;
@@ -491,20 +501,34 @@ def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dic
         if attest_requests:
             _patch_attest_markers(tree, attest_requests, s_correct, magic_val,
                                   getattr(options, "state_delta", False), h_build)
-        # Install the oracle into the launcher globals: globals()[oracle_name_str] = O
-        # O is a closure: (lambda k, m: lambda s: mix(s, k, m))(s_correct, magic_val)
-        # The mix computation is inlined to avoid importing cff.attest at launcher runtime.
-        n_oracle_var = namer.fresh("ora")
         runtime_bind = bool(getattr(options, "attest_runtime_bind", False))
-        cap_stmts, n_gt, n_gp, n_pw, n_bt = [], None, None, None, None
-        if runtime_bind and n_audit_sys:
-            n_gt, n_gp, n_pw, n_bt = (namer.fresh("gt"), namer.fresh("gp"),
-                                      namer.fresh("pw"), namer.fresh("bt"))
-            cap_stmts = emit_body("t_oracle_caps", SYS=n_audit_sys, GT=n_gt, GP=n_gp, PW=n_pw, BT=n_bt)
-        attest_oracle_stmts = cap_stmts + _build_oracle_install_stmts(
-            oracle_name_str, n_oracle_var, s_correct, magic_val,
-            runtime_bind=runtime_bind, cell_name=n_cell,
-            gt_name=n_gt, gp_name=n_gp, pw_name=n_pw, bt_name=n_bt)
+        if publish_runtime:
+            # Multi-module entry: build the oracle value, install it into the entry's own globals
+            # (for the entry body), AND publish the shared dec onto builtins for satellites. With a
+            # registry (import-hook mode) also embed it + install a meta_path finder. The factory
+            # def(s) go into guard_inject (spliced post-flatten, un-transformed).
+            dec_name_str = _attest_dec_name(seed_base)
+            attest_oracle_stmts, _pub_factories = _build_runtime_publish_stmts(
+                namer, options, n_S=n_S, n_ks=n_ks, n_kdf=n_kdf, s_correct=s_correct,
+                magic_val=magic_val, oracle_name_str=oracle_name_str, dec_name_str=dec_name_str,
+                decouple=shared_oracle_decouple, fmt=fmt, runtime_bind=runtime_bind,
+                cell_name=n_cell, n_audit_sys=n_audit_sys, registry=runtime_registry)
+            guard_inject = tuple(guard_inject) + tuple(_pub_factories)
+        else:
+            # Install the oracle into the launcher globals: globals()[oracle_name_str] = O
+            # O is a closure: (lambda k, m: lambda s: mix(s, k, m))(s_correct, magic_val)
+            # The mix computation is inlined to avoid importing cff.attest at launcher runtime.
+            n_oracle_var = namer.fresh("ora")
+            cap_stmts, n_gt, n_gp, n_pw, n_bt = [], None, None, None, None
+            if runtime_bind and n_audit_sys:
+                n_gt, n_gp, n_pw, n_bt = (namer.fresh("gt"), namer.fresh("gp"),
+                                          namer.fresh("pw"), namer.fresh("bt"))
+                cap_stmts = emit_body("t_oracle_caps", SYS=n_audit_sys, GT=n_gt, GP=n_gp,
+                                      PW=n_pw, BT=n_bt)
+            attest_oracle_stmts = cap_stmts + _build_oracle_install_stmts(
+                oracle_name_str, n_oracle_var, s_correct, magic_val,
+                runtime_bind=runtime_bind, cell_name=n_cell,
+                gt_name=n_gt, gp_name=n_gp, pw_name=n_pw, bt_name=n_bt)
 
     # Serialize body bytes AFTER patching attest markers
     body_bytes = _body_bytes(tree, fmt, fname)
@@ -593,20 +617,18 @@ def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dic
     return _as_module(stmts), guard_inject, regions, True
 
 
-def _build_oracle_install_stmts(oracle_name_str: str, oracle_var: str,
-                                 s_correct: int, magic_val: int,
-                                 runtime_bind: bool = False,
-                                 cell_name: str | None = None,
-                                 gt_name: str | None = None, gp_name: str | None = None,
-                                 pw_name: str | None = None, bt_name: str | None = None) -> list:
-    """Build AST stmts that install the oracle into the launcher's globals dict.
-
-    Emits (pure form):
-        globals()['<oracle_name>'] = (lambda k, m: lambda s: <inlined_mix>(s, k, m))(s_correct, magic)
+def _build_oracle_expr(s_correct: int, magic_val: int,
+                       runtime_bind: bool = False,
+                       cell_name: str | None = None,
+                       gt_name: str | None = None, gp_name: str | None = None,
+                       pw_name: str | None = None, bt_name: str | None = None) -> ast.expr:
+    """Build the oracle CLOSURE EXPRESSION (no install):
+        (lambda k, m[, ...]: lambda s: <inlined_mix>(s, k, m))(s_correct, magic[, ...])
 
     The mix function is inlined to avoid any runtime import of cff.attest. The inlined form
-    mirrors the mix() body from cff/attest.py exactly. The oracle is installed by setting
-    globals()[key] so the body's `globals().setdefault(key, fallback)` finds it already present.
+    mirrors the mix() body from cff/attest.py exactly. Callers either assign it to globals()[name]
+    (single-module: `_build_oracle_install_stmts`) or to a variable passed to the shared dec factory
+    (multi-module publish: `_build_runtime_publish_stmts`).
 
     When runtime_bind is on: the oracle key becomes ``k ^ SIGNAL`` where SIGNAL is a sum of runtime
     integrity terms that are 0 in a clean env — ``int(gettrace() is not None)`` /
@@ -742,15 +764,238 @@ def _build_oracle_install_stmts(oracle_name_str: str, oracle_var: str,
                               args=[_const(s_correct), _const(magic_val)] + extra_args,
                               keywords=[])
 
-    # globals()[<charcode oracle name>] = oracle_fn_call
-    # The name is emitted as a charcode expression (not a greppable literal); the body's
-    # setdefault key uses the same _attest_name_expr, so both sides agree on the globals key.
+    return oracle_fn_call
+
+
+def _build_oracle_install_stmts(oracle_name_str: str, oracle_var: str,
+                                 s_correct: int, magic_val: int,
+                                 runtime_bind: bool = False,
+                                 cell_name: str | None = None,
+                                 gt_name: str | None = None, gp_name: str | None = None,
+                                 pw_name: str | None = None, bt_name: str | None = None) -> list:
+    """Install the oracle into the launcher's globals: ``globals()[<charcode name>] = O``.
+
+    The name is emitted as a charcode expression (not a greppable literal); the body's setdefault
+    key uses the same `_attest_name_expr`, so both sides agree. `oracle_var` is retained for
+    signature compatibility (unused)."""
+    oracle_fn_call = _build_oracle_expr(s_correct, magic_val, runtime_bind=runtime_bind,
+                                        cell_name=cell_name, gt_name=gt_name, gp_name=gp_name,
+                                        pw_name=pw_name, bt_name=bt_name)
     subscript_set = ast.Assign(
         targets=[ast.Subscript(
             value=ast.Call(func=ast.Name(id="globals", ctx=ast.Load()), args=[], keywords=[]),
             slice=_attest_name_expr(oracle_name_str),
             ctx=ast.Store())],
         value=oracle_fn_call)
-
     ast.fix_missing_locations(subscript_set)
     return [subscript_set]
+
+
+# ============================================================================================
+# Multi-module shared runtime (obf_project): the entry publishes a shared decrypt function into
+# builtins; satellites ship as stub + encrypted blob and decrypt through it. See
+# plans/2026-06-20-multi-module-project-*.md. `s_correct = f(seed)` (below) is identical for the
+# entry and every satellite, so files build independently (no ordering).
+# ============================================================================================
+
+def project_s_correct(options) -> int:
+    """Reproduce `_assemble_launcher`'s `s_correct` from `options` alone (seed + builtin-check
+    options). Identical draw order to `_assemble_launcher`, so the entry's internal `s_correct`, the
+    oracle, and every satellite's baked key/CORR agree without the entry build running first."""
+    rng = random.Random((options.seed or 0) ^ 0x5EED2A)
+    steps = [((rng.randrange(3, 1 << 32) | 1), rng.randrange(0, 1 << 48)) for _ in range(6)]
+    seed0 = rng.randrange(0, 1 << 48)
+    s_path = _fold(seed0, steps)
+    fold_bi = bool(options.integrity_selfcheck or options.pack_decoy)
+    if fold_bi:
+        _checks, _spot, _bi_clean = _choose_bi(options)
+        return (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK
+    return s_path
+
+
+def _salt_module(module_id: str) -> int:
+    """Per-module key salt = FNV-1a of the module's dotted id. Makes two satellites with identical
+    content produce different ciphertext; baked into the table's kmask so the shared dec needs no
+    salt parameter (it cancels: kmask ^ (S*1) == k_real when S == s_correct)."""
+    return _hash_bytes(module_id.encode("utf-8")) & _MASK
+
+
+def _lit(value) -> ast.expr:
+    """A pure-data literal (dict/tuple/int/str/bytes) as an AST node."""
+    return ast.parse(repr(value), mode="eval").body
+
+
+def _build_satellite_stub(module_id: str, bigblob: bytes, table: dict, default: tuple,
+                          options, dec_name_str: str) -> ast.Module:
+    """The shipped satellite file: import builtins, bind the blob, and call the published shared dec
+    (resolved by char-code name via getattr — no greppable link to the entry) with this module's
+    (blob, table, default, module_id, globals()). The dec decrypts the real/decoy slice, injects the
+    oracle into THIS module's globals, and execs the body here."""
+    namer = Namer(options.seed, set())
+    n_bi = namer.fresh("bi")
+    n_blob = namer.fresh("blob")
+    stmts = [import_stmt(n_bi, "builtins", options)]
+    stmts += _emit_blob_assign(n_blob, bigblob, options, namer)
+    dec_ref = ast.Call(func=ast.Name(id="getattr", ctx=ast.Load()),
+                       args=[ast.Name(id=n_bi, ctx=ast.Load()), _attest_name_expr(dec_name_str)],
+                       keywords=[])
+    call = ast.Call(func=dec_ref, args=[
+        ast.Name(id=n_blob, ctx=ast.Load()),
+        _lit(table), _lit(default), ast.Constant(value=module_id),
+        ast.Call(func=ast.Name(id="globals", ctx=ast.Load()), args=[], keywords=[]),
+    ], keywords=[])
+    stmts.append(ast.Expr(value=call))
+    return _as_module(stmts)
+
+
+def build_satellite(tree: ast.Module, options, *, module_id: str, s_correct: int, magic: int,
+                    dec_name_str: str, decoy_tree: ast.AST | None = None):
+    """Turn an already-pipeline-obfuscated + wrap_module'd module `tree` into a satellite.
+
+    Returns `(stub_module, bigblob, table, default)`:
+      - finalizes the body names with a per-module disjoint salt;
+      - patches attest CORRECTION markers against the shared `s_correct`/`magic`;
+      - serializes + encrypts a real+decoy bigblob with a per-module-salted key;
+      - emits the stub that calls the published dec.
+    `s_correct`/`magic` come from `project_s_correct(options)` / `_attest_MAGIC(seed)`.
+    """
+    from ..cff.lambdalift import lift_lambdas
+    from ..cff.rename import finalize_names
+    lift_lambdas(tree)
+    salt = _salt_module(module_id)
+    finalize_names(tree, options.seed, ns_salt=_BODY_NS_SALT ^ salt)
+    if getattr(options, "attest", False):
+        reqs = getattr(tree, "_pyobf_attest", [])
+        h_build = 0
+        if getattr(options, "body_cohash", False):
+            from ..cff.attest import cohash_build_hash
+            h_build = cohash_build_hash(options.seed)
+        if reqs:
+            _patch_attest_markers(tree, reqs, s_correct, magic,
+                                  getattr(options, "state_delta", False), h_build)
+    fmt = _resolve_format(options)
+    fname = _inner_fname(options)
+    body_bytes = _body_bytes(tree, fmt, fname)
+    k_real = _kdf((s_correct ^ _SALT_KEY ^ salt) & _MASK)
+    e_real = _ks_xor(body_bytes, k_real)
+    k_decoy = _kdf((_SALT_DECOY ^ salt) & _MASK)
+    if getattr(options, "pack_decoy", False):
+        decoy_src = options.decoy_src if getattr(options, "decoy_src", None) else _DEFAULT_DECOY
+        decoy_payload = (_body_bytes(decoy_tree, fmt, fname) if decoy_tree is not None
+                         else _decoy_bytes(decoy_src, fmt, fname))
+        e_decoy = _ks_xor(decoy_payload, k_decoy)
+    else:
+        e_decoy = b""
+    bigblob = e_real + e_decoy
+    sel_correct = _kdf((s_correct ^ _SALT_SEL) & _MASK)
+    table = {sel_correct: (0, len(e_real), (k_real ^ s_correct) & _MASK, 1)}
+    default = (len(e_real), len(e_decoy) or len(e_real), k_decoy, 0)
+    stub = _build_satellite_stub(module_id, bigblob, table, default, options, dec_name_str)
+    return stub, bigblob, table, default
+
+
+def _registry_expr(registry: dict, namer, options):
+    """Build ``(extra_stmts, dict_node)`` for the import-hook registry
+    ``{module_id: (blob, table, default)}`` embedded in the entry. TEXT blobs are b85-decoded at load
+    (``base64.b85decode``); PYC blobs are raw byte literals (optimal in a compiled container)."""
+    import base64
+    extra = []
+    if options.output is OutputFormat.TEXT:
+        n_b64 = namer.fresh("b6")
+        extra.append(import_stmt(n_b64, "base64", options))
+
+        def _blob(b):
+            return ast.Call(
+                func=ast.Attribute(value=ast.Name(id=n_b64, ctx=ast.Load()),
+                                   attr="b85decode", ctx=ast.Load()),
+                args=[ast.Constant(value=base64.b85encode(b))], keywords=[])
+    else:
+        def _blob(b):
+            return ast.Constant(value=b)
+
+    keys, vals = [], []
+    for mid, (blob, table, default) in registry.items():
+        keys.append(ast.Constant(value=mid))
+        vals.append(ast.Tuple(elts=[_blob(blob), _lit(table), _lit(default)], ctx=ast.Load()))
+    return extra, ast.Dict(keys=keys, values=vals)
+
+
+def _build_runtime_publish_stmts(namer, options, *, n_S, n_ks, n_kdf, s_correct, magic_val,
+                                 oracle_name_str, dec_name_str, decouple, fmt,
+                                 runtime_bind=False, cell_name=None, n_audit_sys=None,
+                                 registry=None):
+    """Entry-side: build the shared oracle + dec and publish the dec into ``builtins`` so satellite
+    stubs decrypt through it. Returns ``(stmts, factory_def)``.
+
+    The factory def (``t_mkdec``/``t_mkdec_bc``) is added to the launcher's post-flatten top_defs so
+    its body is never run through the pipeline. ``stmts`` are spliced AFTER the selector (where the
+    runtime selector ``n_S`` is live): build the oracle value ``n_O``, install it into the entry's own
+    globals (for the entry body's own gated gotos), and ``setattr`` the dec onto builtins under its
+    char-code name.
+
+    beta (decouple=False): the dec closes over the RUNTIME selector ``n_S`` — tampering the shipped
+    entry makes ``n_S != s_correct`` and every satellite decodes the decoy. alpha (decouple=True): it
+    closes over the build constant ``s_correct`` — satellites are independent of entry runtime integrity.
+    """
+    stmts = []
+    n_gt = n_gp = n_pw = n_bt = None
+    if runtime_bind and n_audit_sys:
+        n_gt, n_gp, n_pw, n_bt = (namer.fresh("gt"), namer.fresh("gp"),
+                                  namer.fresh("pw"), namer.fresh("bt"))
+        stmts += emit_body("t_oracle_caps", SYS=n_audit_sys, GT=n_gt, GP=n_gp, PW=n_pw, BT=n_bt)
+    # Build the oracle value once; install into the entry's globals (entry body) AND share to the dec.
+    n_O = namer.fresh("ora")
+    oracle_expr = _build_oracle_expr(s_correct, magic_val, runtime_bind=runtime_bind,
+                                     cell_name=cell_name, gt_name=n_gt, gp_name=n_gp,
+                                     pw_name=n_pw, bt_name=n_bt)
+    stmts.append(ast.Assign(targets=[ast.Name(id=n_O, ctx=ast.Store())], value=oracle_expr))
+    stmts.append(ast.Assign(
+        targets=[ast.Subscript(
+            value=ast.Call(func=ast.Name(id="globals", ctx=ast.Load()), args=[], keywords=[]),
+            slice=_attest_name_expr(oracle_name_str), ctx=ast.Store())],
+        value=ast.Name(id=n_O, ctx=ast.Load())))
+    # zlib alias for the dec factory; marshal too on the bytecode path.
+    n_zl = namer.fresh("zl")
+    stmts.append(import_stmt(n_zl, "zlib", options))
+    s_node = (ast.Constant(value=s_correct) if decouple else ast.Name(id=n_S, ctx=ast.Load()))
+    n_mk = namer.fresh("mk")
+    common = [s_node, ast.Name(id=n_ks, ctx=ast.Load()), ast.Name(id=n_kdf, ctx=ast.Load()),
+              ast.Name(id=n_O, ctx=ast.Load()), _attest_name_expr(oracle_name_str),
+              ast.Name(id=n_zl, ctx=ast.Load()), ast.Constant(value=_SALT_SEL),
+              ast.Constant(value=_MASK)]
+    if fmt == "source":
+        factory = emit_def("t_mkdec", t_mkdec=n_mk)
+        mk_args = common + [ast.Constant(value=_inner_fname(options))]
+    else:
+        n_mar = namer.fresh("mar")
+        stmts.append(import_stmt(n_mar, "marshal", options))
+        factory = emit_def("t_mkdec_bc", t_mkdec_bc=n_mk)
+        mk_args = common + [ast.Name(id=n_mar, ctx=ast.Load())]
+    mk_call = ast.Call(func=ast.Name(id=n_mk, ctx=ast.Load()), args=mk_args, keywords=[])
+    # Bind the shared dec to a var: published onto builtins (stub mode) AND handed to the finder.
+    n_dec = namer.fresh("dec")
+    stmts.append(ast.Assign(targets=[ast.Name(id=n_dec, ctx=ast.Store())], value=mk_call))
+    n_bi = namer.fresh("bi")
+    stmts.append(import_stmt(n_bi, "builtins", options))
+    stmts.append(ast.Expr(value=ast.Call(
+        func=ast.Name(id="setattr", ctx=ast.Load()),
+        args=[ast.Name(id=n_bi, ctx=ast.Load()), _attest_name_expr(dec_name_str),
+              ast.Name(id=n_dec, ctx=ast.Load())], keywords=[])))
+    factories = [factory]
+    if registry:
+        # import-hook mode: embed the registry + install a meta_path finder that decrypts on import.
+        reg_extra, reg_node = _registry_expr(registry, namer, options)
+        stmts += reg_extra
+        n_reg = namer.fresh("reg")
+        stmts.append(ast.Assign(targets=[ast.Name(id=n_reg, ctx=ast.Store())], value=reg_node))
+        n_finder = namer.fresh("fnd")
+        factories.append(emit_def("t_meta_finder", t_meta_finder=n_finder))
+        stmts.append(ast.Expr(value=ast.Call(
+            func=ast.Name(id=n_finder, ctx=ast.Load()),
+            args=[ast.Name(id=n_reg, ctx=ast.Load()), ast.Name(id=n_dec, ctx=ast.Load())],
+            keywords=[])))
+    for s in stmts:
+        ast.fix_missing_locations(s)
+    for f in factories:
+        ast.fix_missing_locations(f)
+    return stmts, factories

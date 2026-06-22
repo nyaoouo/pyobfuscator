@@ -186,6 +186,90 @@ All default **off** and **out of the presets** — they can false-positive under
 
 ---
 
+## 12b. `obf_project` — multi-module project obfuscation
+
+```python
+from pyobfuscator import obf_project, ModuleObfOptions
+
+manifest = obf_project(
+    root="src/myapp",
+    out="dist/myapp",
+    entry="main.py",
+    protect=["app/secret.py", "app/logic/*.py"],
+    options=ModuleObfOptions(
+        output="pyc", seed=42,
+        pack_body=True, key_from_cff=True,
+        attest=True, pack_decoy=True,
+    ),
+)
+# manifest == {"main.py": "entry", "app/secret.py": "protect",
+#              "app/__init__.py": "plaintext", ...}
+```
+
+`obf_project` obfuscates an entire Python source tree. It mirrors the tree into `out`, obfuscating
+selected files and copying the rest verbatim. It returns a `{relative_path → role}` manifest where
+`role` is `"entry"`, `"protect"`, or `"plaintext"`.
+
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `root` | — | Source tree root directory. |
+| `out` | — | Output directory. The source tree layout is mirrored into it. |
+| `entry` | — | Relative path of the entry module (e.g. `"main.py"`). Must exist under `root`. Fail-loud if missing. |
+| `protect` | `None` | List of relative paths and/or `fnmatch` glob patterns selecting files to obfuscate. The entry is never in this set even if a pattern matches it. Each pattern must match at least one file (fail-loud otherwise). `None` or `[]` means no satellites. |
+| `options` | `ModuleObfOptions()` | A `ModuleObfOptions` instance (the same options object as `obf_module`). The same `seed` is shared across all files, which is what makes the selector `s_correct = f(seed)` agree everywhere without a build-ordering dependency. |
+| `import_hook` | `False` | When `True`, satellite blobs are embedded in a registry inside the entry and the entry installs a `sys.meta_path` finder that decrypts satellites on `import`. Per-file stub `.py`/`.pyc` files are **not** emitted for satellites; plaintext package files (e.g. `app/__init__.py`) still are. Requires shared-runtime mode (raises `ValueError` otherwise). |
+| `shared_oracle_decouple` | `False` | Oracle binding mode. `False` (default, **beta**): the shared `dec` function closes over the entry's runtime selector — tampering the entry's dispatcher makes every satellite decode its decoy. `True` (**alpha**): `dec` closes over the build-time constant selector, so satellites are independent of the entry's runtime integrity (useful for incremental build pipelines). Satellite blobs are byte-identical between both modes. |
+
+### Two operating modes
+
+**Shared-runtime mode** activates when `options` enables the full attestation stack (`attest=True`
++ `pack_body=True` + `key_from_cff=True` + `output` in `"text"`/`"pyc"`) and there is at least one
+protected file. In this mode:
+
+- The entry is built with an additional step that publishes a shared `dec` function (decrypt +
+  decompress + exec) and the attestation oracle into `builtins`.
+- Each protected module ships as a small **stub** + an encrypted blob. The stub calls the published
+  `dec`, which decrypts the real or decoy body, injects the oracle into the satellite's own module
+  globals, and `exec`s it there. A normal `import app.secret` (or `from app.secret import x`) works
+  transparently, including reverse-imports from plaintext modules.
+- Because `s_correct = f(seed)` depends only on the seed (and `builtin_checks` options), not on
+  any file's source, files build **independently in any order**. Rebuilding a single satellite with
+  the same seed and dropping it into the existing output is sufficient — the unchanged entry will
+  run it correctly.
+
+**Self-contained fallback** activates when the attestation stack is not enabled (or there are no
+protected files). Each protected and entry file is built as an independent self-contained
+single-module launcher with no shared runtime. A protected file can then self-decrypt even if the
+entry has not run.
+
+### Entry-bound fail-loud
+
+Under **shared-runtime mode**, importing a satellite without the entry having first published the
+shared `dec` into `builtins` fails loudly at runtime — the satellite stub's call to the absent
+`dec` raises `AttributeError`. Satellites are not designed to be run or imported standalone.
+
+### PYC output
+
+Obfuscated files are emitted as sourceless `.pyc` files when `options.output == "pyc"`: `main.py`
+→ `main.pyc` (run with `python main.pyc`); `app/secret.py` → `app/secret.pyc` (imported as `import
+app.secret`). Plaintext files always keep their `.py` name.
+
+### Scope and known limits
+
+Supported: regular packages (`app/__init__.py` listed in `protect` is obfuscated; otherwise it is
+copied plaintext), reverse imports from plaintext modules into satellites, and circular imports
+(standard Python semantics apply).
+
+Not supported: namespace packages (no `__init__.py`), C extensions (`.pyd`/`.so`), and running a
+satellite directly with `python -m <satellite>`.
+
+A runnable demo is available at `sample/project_test/` (build with `build_project.py`); the
+single-file showcase is at `sample/single_file/`.
+
+---
+
 ## 13. Fail-loud precondition summary
 
 The API rejects these combinations up front (rather than shipping a launcher that breaks on the honest
@@ -199,6 +283,7 @@ path):
 | `body_cohash=True` | `output="pyc"` | `ValueError` |
 | `attest_runtime_bind=True` | `attest=True` | (no effect without it) |
 | `name_vault_attrs=True` | `name_vault=True` | (no effect without it) |
+| `import_hook=True` (in `obf_project`) | shared-runtime mode (`attest` + `pack_body` + `key_from_cff` + text/pyc + ≥1 protected file) | `ValueError` |
 
 Warnings (not errors):
 

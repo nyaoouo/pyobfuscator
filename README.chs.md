@@ -65,6 +65,31 @@ obf_module(src, ModuleObfOptions(output="pyc", seed=1, protect_level="full"))
 
 每个选项的作用、影响及限制，详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**。
 
+### 多模块项目
+
+`obf_project` 可以一次性混淆整个源代码树：一个入口模块向 `builtins` 发布共享解密运行时；每个受保护模块以轻量级存根 + 加密 blob 的形式分发，并通过该运行时解密。明文文件逐字复制。
+
+```python
+from pyobfuscator import obf_project, ModuleObfOptions
+
+manifest = obf_project(
+    root="src/myapp",
+    out="dist/myapp",
+    entry="main.py",                          # 发布共享运行时
+    protect=["app/secret.py", "app/logic.py"],# 作为卫星混淆
+    # app/__init__.py 未列出 → 逐字复制为明文
+    options=ModuleObfOptions(
+        output="pyc", seed=42,
+        pack_body=True, key_from_cff=True,
+        attest=True, pack_decoy=True,
+    ),
+)
+# 运行：python dist/myapp/main.pyc
+# 导入同样有效：import app.secret   （透明加载 app/secret.pyc）
+```
+
+可运行的演示位于 `sample/project_test/`（通过 `build_project.py` 构建）。完整参数说明（包括 `import_hook` 和 `shared_oracle_decouple`）详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**。
+
 ---
 
 ## 功能一览
@@ -109,11 +134,3 @@ pyobfuscator/
 ```
 
 测试套件分为差分测试（编译原始版与混淆版，对比跨多个 seed 的行为）和结构测试（断言特定变换是否存在）。错误路径 / dump-replay 检查在可终止的子进程中运行，因为错误的 dispatcher 状态可能导致死循环。
-
-## 演示
-
-一个完整的端到端示例（使用完整混淆 + 保护栈构建的一道小型挑战题、一个逼真的诱饵，以及验证未 trace 运行行为正常而 trace/dump 运行被重定向到诱饵）存放于独立的构建工作流中，不随包分发——策略和秘密（诱饵、标记）属于构建工作流，永远不应进入库代码。
-
-## 状态
-
-混淆管线和保护栈均已完成并独立验证；库位于 `feat/implementation` 分支（尚未合并到 master）。本层不涉及的范围：原生 / 驱动保护层（即威胁模型中提到的进程内活跃 dump 上限）。

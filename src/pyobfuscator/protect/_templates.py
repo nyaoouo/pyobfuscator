@@ -121,6 +121,61 @@ def t_decoy_tail_bc():
     XF(MAR.loads(ZLIB.decompress(KS(BLOB[ENT[0]:ENT[0] + ENT[1]], KEY))), GLB)
 
 
+# ---- shared multi-module runtime: the decrypt-and-exec factory published into builtins ----
+# FACTORY FORM: emitted as a top-level def spliced in AFTER the launcher flatten (like the cohash
+# guard), so its body is never run through the pipeline (no call-routing corruption). The CALL site
+# `<builtins>.<dec> = t_mkdec(S, ks, kdf, oracle, oname, zlib, SALT_SEL, MASK, fname)` lives inside the
+# flattened launcher, so it captures the RUNTIME selector S (n_S) — beta binding — or a build constant
+# (alpha). The returned `_d(blob, table, default, module_id, g)` mirrors t_decoy_set_s + t_decoy_tail:
+# select the real/decoy slice via the shared selector, inject the oracle into the SATELLITE's own
+# globals `g` (so the body's `globals().setdefault(oname, fallback)` finds it — globals() excludes
+# builtins), then exec the body into `g`. Per-module key salt is already baked into the table's kmask.
+def t_mkdec(S, KS, KDF, O, ON, ZL, SS, MK, FN):
+    def _d(blob, table, default, module_id, g):
+        ent = table.get(KDF((S ^ SS) & MK), default)
+        key = (ent[2] ^ (S * ent[3])) & MK
+        src = ZL.decompress(KS(blob[ent[0]:ent[0] + ent[1]], key)).decode('utf-8')
+        g[ON] = O
+        exec(compile(src, FN, 'exec'), g)
+    return _d
+
+
+def t_mkdec_bc(S, KS, KDF, O, ON, ZL, SS, MK, MAR):
+    # Bytecode-format variant: the body slice is a marshalled code object, not source.
+    def _d(blob, table, default, module_id, g):
+        ent = table.get(KDF((S ^ SS) & MK), default)
+        key = (ent[2] ^ (S * ent[3])) & MK
+        code = MAR.loads(ZL.decompress(KS(blob[ent[0]:ent[0] + ent[1]], key)))
+        g[ON] = O
+        exec(code, g)
+    return _d
+
+
+# ---- optional import-hook mode: a sys.meta_path finder that serves registered satellites ----
+# FACTORY FORM (like t_mkdec): a top-level def spliced post-flatten. Called as
+# `t_meta_finder(REG, DEC)` inside the launcher; the installed finder closes over REG (the
+# {module_id: (blob, table, default)} registry embedded in the entry) and DEC (the shared decrypt).
+# On `import <registered_id>` it builds the module and decrypts the body into it via the shared dec.
+def t_meta_finder(REG, DEC):
+    import sys as _pyx_s
+    import importlib.util as _pyx_u
+
+    class _F:
+        def find_spec(self, name, path=None, target=None):
+            if name in REG:
+                return _pyx_u.spec_from_loader(name, self)
+            return None
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            _e = REG[module.__name__]
+            DEC(_e[0], _e[1], _e[2], module.__name__, module.__dict__)
+
+    _pyx_s.meta_path.insert(0, _F())
+
+
 def t_detect_assign():
     DVAR = DEXPR
 

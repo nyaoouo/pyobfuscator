@@ -23,11 +23,12 @@ from .cff.emit import emit
 from .cff.analyze import build_model, analyze_html, build_protect_model, protect_html
 from .cff.module_wrap import wrap_module
 from .packer import pack_module
+from .protect.project import obf_project
 
 __version__ = "0.0.0"
 
 __all__ = [
-    "obf_func", "obf_module",
+    "obf_func", "obf_module", "obf_project",
     "ObfOptions", "ModuleObfOptions", "OutputFormat", "UnsupportedPolicy",
     "build_model", "analyze_html", "build_protect_model", "protect_html",
     "local_call", "cache_tag", "sourceless_pyc_name", "MIN_SUPPORTED_PYTHON",
@@ -186,8 +187,18 @@ def obf_func(src, options: ObfOptions | None = None, *, sourcemap_out: dict | No
     return emit(tree, options, sourcemap_out=sourcemap_out, layer="function")
 
 
-def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: dict | None = None):
+def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: dict | None = None,
+               publish_runtime: bool = False, shared_oracle_decouple: bool = False,
+               runtime_registry: dict | None = None):
     options = options or ModuleObfOptions()
+    if publish_runtime and not getattr(options, "attest", False):
+        # The shared multi-module runtime publishes the attestation oracle (and the decrypt fn keyed
+        # on the same selector) into builtins; without attest there is no oracle/selector machinery
+        # to publish. obf_project always sets attest for protected projects.
+        raise ValueError(
+            "publish_runtime=True requires attest=True (the entry publishes the attestation oracle "
+            "+ shared decrypt function into builtins). It also inherits attest's requirement of "
+            "pack_body=True, key_from_cff=True and output text/pyc.")
     # Fail-loud: attest needs the packer to (a) install the oracle into the body's globals and
     # (b) patch the CORRECTION markers in the body. Both happen in pack_module, which runs only
     # when pack_body+key_from_cff are set AND output is text/pyc. Emitting gated gotos without
@@ -230,7 +241,10 @@ def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: d
     if packed:
         # Obfuscate the decoy with the same pipeline so a decrypted decoy is indistinguishable.
         decoy_tree = _obfuscate_decoy(options) if getattr(options, "pack_decoy", False) else None
-        tree = pack_module(tree, options, sourcemap_out=sourcemap_out, decoy_tree=decoy_tree)
+        tree = pack_module(tree, options, sourcemap_out=sourcemap_out, decoy_tree=decoy_tree,
+                           publish_runtime=publish_runtime,
+                           shared_oracle_decouple=shared_oracle_decouple,
+                           runtime_registry=runtime_registry)
     # require_min_python: a PLAINTEXT min-version guard in the OUTERMOST layer (TEXT-only — a .pyc/ast
     # is already locked to its build version by its magic). Enforces MIN_SUPPORTED_PYTHON so a too-old
     # interpreter gets a clean "requires Python X.Y+" message instead of a cryptic failure.

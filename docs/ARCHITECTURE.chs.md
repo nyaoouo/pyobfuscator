@@ -33,6 +33,23 @@ src → (大声报错的前置条件检查)
 
 诱饵（当启用 `pack_decoy`）会经过**相同**的流水线（`_obfuscate_decoy`）进行混淆，因此解密后的诱饵在结构上与真实体无法区分。
 
+`obf_project(*, root, out, entry, protect, options, import_hook, shared_oracle_decouple)`：
+
+```
+classify_files(root, entry, protect)   # → {相对路径 → Role}
+    ↓ 是否启用共享运行时模式？（attest + pack_body + key_from_cff + text/pyc + ≥1 个受保护文件）
+    是 → project_s_correct(options)   # 一个种子派生的选择器，被所有文件共享
+          对每个 PROTECT 文件：
+              _MODULE_PIPELINE.run → wrap_module
+              build_satellite(tree, …) # 存根 + 加密 blob（s_correct = f(seed)，无构建顺序依赖）
+              → 将存根输出到 <rel>.pyc  （或注册到入口的 import-hook 注册表中）
+          obf_module(entry_src, …, publish_runtime=True,
+                     shared_oracle_decouple=…, runtime_registry=…)
+                       # 入口启动器额外将共享 dec 函数 + oracle 发布到 builtins
+    否 → obf_module(每个受保护/入口文件)   # 独立单模块自包含回退
+    对每个 PLAINTEXT 文件：shutil.copyfile 逐字复制
+```
+
 ---
 
 ## Pass 流水线
@@ -60,8 +77,8 @@ src → (大声报错的前置条件检查)
 
 ### `__init__.py`
 - **职责：** 公共 API 与编排。定义流水线，串接 `pipeline → wrap_module → pack_module → emit → outer_compress`，并包含大声报错的前置条件检查。
-- **对外接口：** `obf_func`、`obf_module`（入口点）；重导出 `ObfOptions`/`ModuleObfOptions`/`OutputFormat`/`UnsupportedPolicy`、`local_call`、分析 / 可视化函数；`cache_tag()`、`sourceless_pyc_name(module, *, tagged=False)`、`MIN_SUPPORTED_PYTHON`；内部的 `_FUNC_PIPELINE`/`_MODULE_PIPELINE`、`_obfuscate_decoy`、`_warn_docstrings`、`_warn_version_lock`、`_version_guard_src`、`_insert_version_guard`。
-- **交互：** 导入每个 Pass；前置条件检查守护 `attest` / `body_cohash`。
+- **对外接口：** `obf_func`、`obf_module`、`obf_project`（入口点）；重导出 `ObfOptions`/`ModuleObfOptions`/`OutputFormat`/`UnsupportedPolicy`、`local_call`、分析 / 可视化函数；`cache_tag()`、`sourceless_pyc_name(module, *, tagged=False)`、`MIN_SUPPORTED_PYTHON`；内部的 `_FUNC_PIPELINE`/`_MODULE_PIPELINE`、`_obfuscate_decoy`、`_warn_docstrings`、`_warn_version_lock`、`_version_guard_src`、`_insert_version_guard`。
+- **交互：** 导入每个 Pass；前置条件检查守护 `attest` / `body_cohash`；从 `protect.project` 重导出 `obf_project`。
 
 ### `options.py`
 - **职责：** 所有配置以 dataclass 形式表达；是标志与默认值的单一真相来源。
@@ -262,8 +279,13 @@ src → (大声报错的前置条件检查)
 
 ### `protect/core.py`
 - **职责：** 启动器组装 + 平坦化编排 — 打包器的核心。
-- **对外接口：** **`pack_module(tree, options, *, sourcemap_out, decoy_tree)`**（入口点）；`_assemble_launcher`（平坦化前的启动器 + 区域）、`_flatten_launcher`、`_emit_neuter`、`_emit_bi`、`_emit_blob_assign`、`_single_tail`、`_patch_attest_markers`、`_build_oracle_install_stmts`、`_guard_cohash`、`_choose_bi`、`_inner_fname`、`_needs_audit_cell`；盐值 `_BODY_NS_SALT`、`_DECOY_NS_SALT`（使代码体 / 诱饵 / 启动器名称相互隔离）。
-- **交互：** 导入 `cipher`/`templates`/`detectors`/`astutil`/`_templates`；延迟使用 `cff.names`、`cff.attest`、`cff.rename`、`cff.module_wrap` 和 `_MODULE_PIPELINE`。
+- **对外接口：** **`pack_module(tree, options, *, sourcemap_out, decoy_tree)`**（入口点）；`_assemble_launcher`（平坦化前的启动器 + 区域）、`_flatten_launcher`、`_emit_neuter`、`_emit_bi`、`_emit_blob_assign`、`_single_tail`、`_patch_attest_markers`、`_build_oracle_install_stmts`、`_guard_cohash`、`_choose_bi`、`_inner_fname`、`_needs_audit_cell`；盐值 `_BODY_NS_SALT`、`_DECOY_NS_SALT`（使代码体 / 诱饵 / 启动器名称相互隔离）；多模块辅助函数 **`project_s_correct(options)`**（整个项目各文件共享的种子派生选择器）、**`build_satellite(tree, options, *, module_id, s_correct, magic, dec_name_str, decoy_tree)`**（将受保护模块加密为存根 + blob）以及 **`_build_runtime_publish_stmts(...)`**（为入口生成向 builtins 发布共享 `dec` 函数与 oracle 的语句）。
+- **交互：** 导入 `cipher`/`templates`/`detectors`/`astutil`/`_templates`；延迟使用 `cff.names`、`cff.attest`（包括 `dec_name`）、`cff.rename`、`cff.module_wrap` 和 `_MODULE_PIPELINE`。
+
+### `protect/project.py`
+- **职责：** 项目级多模块混淆编排。驱动单模块打包器在整个源代码树上工作，实现**核心 + 卫星**模型：一个入口模块（核心）向 `builtins` 发布共享保护运行时；受保护模块（卫星）以小型存根 + 加密 blob 的形式分发，通过该运行时解密；所有其他文件逐字复制。
+- **对外接口：** **`obf_project(*, root, out, entry, protect, options, import_hook, shared_oracle_decouple)`**（主入口点，返回 `{相对路径 → 角色字符串}` 清单）；`classify_files(root, *, entry, protect)`（遍历源代码树并为每个 `.py` 文件分配 `Role`）；`Role`（枚举：`ENTRY` / `PROTECT` / `PLAINTEXT`）；内部辅助函数 `_walk_py`、`_module_id`、`_out_rel`、`_emit_to`。
+- **交互：** 调用 `obf_module`（来自 `__init__`）用于入口及自包含回退构建；直接使用 `_MODULE_PIPELINE` + `wrap_module` + `emit` 进行卫星构建；依赖 `protect.core.project_s_correct`、`protect.core.build_satellite` 以及 `protect.core._build_runtime_publish_stmts`（通过 `pack_module` 中的 `publish_runtime` 路径）；读取 `cff.attest.MAGIC` 和 `cff.attest.dec_name`（发布到 `builtins` 的共享解密函数的种子派生名称）。
 
 ---
 

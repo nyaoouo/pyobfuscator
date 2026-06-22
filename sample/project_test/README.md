@@ -1,0 +1,53 @@
+# Multi-module project demo (`obf_project`)
+
+A runnable demo of pyobfuscator's **project-level** mode: one entry module hosts a shared protection
+runtime; protected modules ship as encrypted-blob stubs that decrypt through it; other modules stay
+plaintext for the user to edit.
+
+## Layout
+
+```
+src/
+  main.py          # entry — its launcher installs the shared runtime (decrypt + oracle) into builtins
+  app/__init__.py  # plaintext (package marker)
+  app/secret.py    # PROTECTED — core licensed logic (the key literal + transform live only here)
+  app/logic.py     # plaintext business logic; reverse-imports app.secret (user-editable)
+build_project.py   # build + self-verification
+dist/              # build output (git-ignored)
+```
+
+## Build + verify
+
+```sh
+../../.venv/Scripts/python build_project.py
+```
+
+This obfuscates `src/` into `dist/` via `obf_project(...)` with the full protection stack, then
+verifies against the shipped tree:
+
+| # | Scenario | Expected |
+|---|----------|----------|
+| 1 | `python dist/main.py PYOBF-PRO-2026 hello` | `OK:OLLEH`; wrong key → `DENIED` |
+| 2 | reverse import (`app/logic.py` imports the protected `app/secret`) | works (covered by #1) |
+| 3 | **update only `secret`** — rebuild `secret` alone (same seed), keep the old entry | old entry runs the new satellite |
+| 4 | **tamper the entry** (corrupt `dist/main.py`) | genuine output gone |
+| 5 | **tamper a satellite** (corrupt `dist/app/secret.py`) | that module breaks |
+| 6 | **traced load** (debugger / `sys.settrace` at start) | decoy (real output gone) |
+| 7 | **foreign import** (`import app.secret` without the entry) | fails loud (entry-bound) |
+
+## Run it yourself
+
+```sh
+python dist/main.py PYOBF-PRO-2026 hello   # -> OK:OLLEH
+python dist/main.py wrong-key hello        # -> DENIED
+```
+
+## Notes
+
+- **Shared oracle / key** come from one `seed`, so the entry and every satellite agree
+  (`s_correct = f(seed)`) and build independently — updating one satellite needs only that rebuild.
+- **β binding** (default): tampering the shipped entry diverts every satellite to its decoy. Pass
+  `shared_oracle_decouple=True` for α (satellites independent of entry runtime integrity).
+- **Entry-bound**: importing a satellite without the entry having published the runtime fails loud
+  (it is not meant to run on its own).
+- For a single-file demo with the full CFF + protection showcase, see `../single_file/`.

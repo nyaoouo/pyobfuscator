@@ -39,6 +39,23 @@ src → (fail-loud precondition checks)
 The decoy (when `pack_decoy`) is obfuscated through the **same** pipeline (`_obfuscate_decoy`) so a
 decrypted decoy is structurally indistinguishable from the real body.
 
+`obf_project(*, root, out, entry, protect, options, import_hook, shared_oracle_decouple)`:
+
+```
+classify_files(root, entry, protect)   # → {rel_path → Role}
+    ↓ shared-runtime mode?  (attest + pack_body + key_from_cff + text/pyc + ≥1 protected file)
+    Yes → project_s_correct(options)   # one seed-derived selector shared by all files
+          for each PROTECT file:
+              _MODULE_PIPELINE.run → wrap_module
+              build_satellite(tree, …) # stub + encrypted blob (s_correct = f(seed), no ordering dependency)
+              → emit stub to <rel>.pyc  (or register in entry's import-hook registry)
+          obf_module(entry_src, …, publish_runtime=True,
+                     shared_oracle_decouple=…, runtime_registry=…)
+                       # entry launcher additionally publishes shared dec + oracle into builtins
+    No  → obf_module(each protected/entry file)   # self-contained single-module fallback
+    for each PLAINTEXT file: shutil.copyfile verbatim
+```
+
 ---
 
 ## The pass pipeline
@@ -69,12 +86,13 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
 ### `__init__.py`
 - **Role:** Public API and orchestration. Defines the pipelines and wires `pipeline → wrap_module →
   pack_module → emit → outer_compress`, with fail-loud precondition checks.
-- **Provides:** `obf_func`, `obf_module` (entry points); re-exports `ObfOptions`/`ModuleObfOptions`/
-  `OutputFormat`/`UnsupportedPolicy`, `local_call`, the analyze/visualizer functions; `cache_tag()`,
-  `sourceless_pyc_name(module, *, tagged=False)`, `MIN_SUPPORTED_PYTHON`; internal `_FUNC_PIPELINE`/
-  `_MODULE_PIPELINE`, `_obfuscate_decoy`, `_warn_docstrings`, `_warn_version_lock`, `_version_guard_src`,
-  `_insert_version_guard`.
-- **Interacts with:** imports every pass; the precondition checks guard `attest` / `body_cohash`.
+- **Provides:** `obf_func`, `obf_module`, `obf_project` (entry points); re-exports
+  `ObfOptions`/`ModuleObfOptions`/`OutputFormat`/`UnsupportedPolicy`, `local_call`, the
+  analyze/visualizer functions; `cache_tag()`, `sourceless_pyc_name(module, *, tagged=False)`,
+  `MIN_SUPPORTED_PYTHON`; internal `_FUNC_PIPELINE`/`_MODULE_PIPELINE`, `_obfuscate_decoy`,
+  `_warn_docstrings`, `_warn_version_lock`, `_version_guard_src`, `_insert_version_guard`.
+- **Interacts with:** imports every pass; the precondition checks guard `attest` / `body_cohash`;
+  re-exports `obf_project` from `protect.project`.
 
 ### `options.py`
 - **Role:** All configuration as dataclasses; the single source of truth for flags + defaults.
@@ -359,9 +377,32 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
   `_assemble_launcher` (pre-flatten launcher + regions), `_flatten_launcher`, `_emit_neuter`, `_emit_bi`,
   `_emit_blob_assign`, `_single_tail`, `_patch_attest_markers`, `_build_oracle_install_stmts`,
   `_guard_cohash`, `_choose_bi`, `_inner_fname`, `_needs_audit_cell`; salts `_BODY_NS_SALT`,
-  `_DECOY_NS_SALT` (keep body/decoy/launcher names disjoint).
+  `_DECOY_NS_SALT` (keep body/decoy/launcher names disjoint); multi-module helpers
+  **`project_s_correct(options)`** (seed-derived selector shared by all files in a project),
+  **`build_satellite(tree, options, *, module_id, s_correct, magic, dec_name_str, decoy_tree)`**
+  (encrypt a protected module into a stub + blob), and
+  **`_build_runtime_publish_stmts(...)`** (generate the entry's builtins-publish statements for the
+  shared `dec` function and oracle).
 - **Interacts with:** imports `cipher`/`templates`/`detectors`/`astutil`/`_templates`; lazily uses
-  `cff.names`, `cff.attest`, `cff.rename`, `cff.module_wrap`, and `_MODULE_PIPELINE`.
+  `cff.names`, `cff.attest` (including `dec_name`), `cff.rename`, `cff.module_wrap`, and
+  `_MODULE_PIPELINE`.
+
+### `protect/project.py`
+- **Role:** Project-level multi-module obfuscation orchestration. Drives the single-module packer
+  across a source tree, implementing the **Kernel + Satellites** model: one entry module (the kernel)
+  publishes a shared protection runtime into `builtins`; protected modules (satellites) ship as a
+  small stub + encrypted blob that decrypt through that runtime; all other files are copied verbatim.
+- **Provides:** **`obf_project(*, root, out, entry, protect, options, import_hook,
+  shared_oracle_decouple)`** (main entry point, returns `{rel_path → role_str}` manifest);
+  `classify_files(root, *, entry, protect)` (walks the source tree and assigns each `.py` file a
+  `Role`); `Role` (enum: `ENTRY` / `PROTECT` / `PLAINTEXT`); internal helpers `_walk_py`, `_module_id`,
+  `_out_rel`, `_emit_to`.
+- **Interacts with:** calls `obf_module` (from `__init__`) for entry and self-contained fallback
+  builds; uses `_MODULE_PIPELINE` + `wrap_module` + `emit` directly for satellite builds; relies on
+  `protect.core.project_s_correct`, `protect.core.build_satellite`, and
+  `protect.core._build_runtime_publish_stmts` (via the `publish_runtime` path in `pack_module`);
+  reads `cff.attest.MAGIC` and `cff.attest.dec_name` (the seed-derived name for the shared decrypt
+  function published into `builtins`).
 
 ---
 
