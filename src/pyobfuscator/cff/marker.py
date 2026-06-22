@@ -10,11 +10,29 @@ def local_call(fn):
 
 
 def precompile(x):
-    """Mark an expression for BUILD-TIME evaluation: the obfuscator evaluates the argument expression
-    at build time and replaces the `precompile(...)` call with the resulting constant (which then flows
-    through the literal-obfuscation passes and gets encrypted). Identity at runtime, so un-obfuscated
-    source still runs. The expression must be evaluable at build (module-level functions/imports/
-    literals; not function parameters) and yield a literal-representable value."""
+    """Mark a value for BUILD-TIME evaluation. Two forms, both folded by `PrecompilePass`:
+
+    * **Expression** — `precompile(expr)`: the obfuscator evaluates `expr` at build time and replaces
+      the call with the resulting constant (which then flows through the literal-obfuscation passes and
+      gets encrypted). At runtime it returns `expr` unchanged, so un-obfuscated source still runs.
+    * **Decorator** — `@precompile` on a module-level zero-argument function: the obfuscator runs the
+      function at build time and binds its name to the returned constant (`NAME = <const>`), replacing
+      the `def`. A thunk (loops, locals) can compute a build constant, not just a single expression.
+
+    At runtime, the decorator form CALLS the thunk and binds the result, so the un-obfuscated name holds
+    the SAME value the obfuscator folds in (consistency, not just no-op identity). Detection: a plain
+    zero-argument function argument is called; any other value is returned unchanged — so the
+    `precompile(expr)` form is unaffected (its argument is an already-evaluated value, not a thunk).
+
+    The build value must be evaluable at build (module-level functions/imports/literals; not a function
+    parameter) and be a literal-representable constant."""
+    import types
+    if isinstance(x, types.FunctionType):
+        co = x.__code__
+        required_pos = co.co_argcount - len(x.__defaults__ or ())
+        required_kw = co.co_kwonlyargcount - len(x.__kwdefaults__ or {})
+        if required_pos <= 0 and required_kw <= 0:   # callable with no arguments -> a build-time thunk
+            return x()
     return x
 
 

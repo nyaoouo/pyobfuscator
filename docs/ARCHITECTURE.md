@@ -63,7 +63,7 @@ classify_files(root, entry, protect)   # → {rel_path → Role}
 `_FUNC_PIPELINE` and `_MODULE_PIPELINE` (identical order, defined in `__init__.py`) run these passes;
 each enforces a default-deny node allowlist (`gate.py`) before transforming:
 
-1. **`PrecompilePass`** — evaluate `precompile(expr)` / `precompile_arg(key[, dflt])` markers at build time and replace each call with the resulting constant. Runs **first** so folded constants then flow through all downstream literal-obfuscation passes. Marker resolution runs in an isolated subprocess for `precompile` expressions (so module-level code is exec'd safely); standalone `precompile_arg` with a literal key/default resolves in-process. Strips the marker imports after folding.
+1. **`PrecompilePass`** — evaluate `precompile(expr)` / `precompile_arg(key[, dflt])` / `@precompile` (decorator on a module-level zero-arg function → `NAME = <const>`) markers at build time and replace each with the resulting constant. Runs **first** so folded constants then flow through all downstream literal-obfuscation passes. Marker resolution runs in an isolated subprocess for `precompile` expressions and `@precompile` thunks (so module-level code is exec'd safely; the thunk decorator is stripped in the build source so `precompile_arg` injection works inside it); standalone `precompile_arg` with a literal key/default resolves in-process. Strips the marker imports after folding.
 2. **`LocalCallPass`** — handle `@local_call` (inline/rename marked helpers, strip the marker import).
 3. **`DictIndirectPass`** — route internal-function references through a per-scope `_D[key]` dict (`dict_indirect`).
 4. **`NormalizePass`** — desugar `match` → if-chains; optional `return_var` rewrite (structural patterns fail-loud).
@@ -186,7 +186,7 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
 
 ### `cff/marker.py`
 - **Role:** Build-time marker functions (identity / default at runtime; recognized + acted on by the engine).
-- **Provides:** `local_call(fn)` (identity decorator); `precompile(x)` (returns `x`); `precompile_arg(key, default=None)` (returns `default`). All three are exported from the top-level `pyobfuscator` package.
+- **Provides:** `local_call(fn)` (identity decorator); `precompile(x)` (returns `x`, or calls `x` when it is a zero-arg thunk — the `@precompile` decorator form); `precompile_arg(key, default=None)` (returns `default`). All three are exported from the top-level `pyobfuscator` package.
 - **Interacts with:** `local_call` is acted on by `LocalCallPass`; `precompile`/`precompile_arg` are acted on by `PrecompilePass`.
 
 ### `cff/directives.py`
@@ -235,9 +235,9 @@ After the pipeline, `obf_module` runs `wrap_module` (flatten the module body), t
 - **Provides:** `Pass` (Protocol), **`Pipeline`** (`run(tree, options)`), `register`, `get`, `all_passes`.
 
 ### `passes/precompile.py`
-- **Role:** Build-time partial evaluation of `precompile` / `precompile_arg` markers. Runs **first** in the pipeline. For each outermost marker call it computes a constant at build time and replaces the call with that constant; the downstream literal-obfuscation passes then encrypt it.
-- **Provides:** `PrecompilePass`; `_build_marker_resolver` (alias-aware marker detection from `from pyobfuscator import ...` and `import pyobfuscator` forms); `_Collect` (outermost marker-call collector, does not descend into nested marker args); `_Replace` (AST node replacer); `_strip_marker_imports` (removes the now-folded marker names from `from pyobfuscator import ...`); `_literal_node` (validates and parses a repr string); `_run_subprocess` (isolated-subprocess evaluation driver, JSON in/out); `_inproc_arg` (fast in-process resolution for standalone `precompile_arg` with literal key/default).
-- **Interacts with:** must run before `LocalCallPass` and all literal-obfuscation passes; reads `options.precompile_args`; uses a subprocess (`subprocess.run`) to exec the module source and eval marker expressions in isolation (30 s timeout). Tolerates pre-normalization `match` nodes in `supports()`.
+- **Role:** Build-time partial evaluation of `precompile` / `precompile_arg` markers (call and `@precompile` decorator forms). Runs **first** in the pipeline. For each outermost marker call it computes a constant and replaces the call with it; for each `@precompile` thunk it computes `NAME()` and replaces the whole `def` with `NAME = <const>`; the downstream literal-obfuscation passes then encrypt the constants.
+- **Provides:** `PrecompilePass`; `_build_marker_resolver` (alias-aware marker detection from `from pyobfuscator import ...` and `import pyobfuscator` forms; `.ref` resolves bare decorator references); `_decorated_thunks` (collects + validates module-level `@precompile` functions: top-level, sync, zero-arg, sole decorator); `_Collect` (outermost marker-call collector, skips `@precompile` thunk bodies); `_Replace` (replaces folded calls and thunk `def`s); `_assign_node` / `_build_eval_src` (thunk `NAME = <const>` builder; build source with thunk decorators stripped); `_strip_marker_imports` (drops folded marker names from `from pyobfuscator import …` and a now-unused `import pyobfuscator [as p]`, while keeping a still-referenced alias); `_literal_node`; `_run_subprocess` (isolated-subprocess driver, JSON in/out); `_inproc_arg`.
+- **Interacts with:** must run before `LocalCallPass` and all literal-obfuscation passes; reads `options.precompile_args` and `options.precompile_timeout`; uses a subprocess (`subprocess.run`) to exec the module source and eval marker expressions / thunk calls in isolation (results cached per process). Tolerates pre-normalization `match` nodes in `supports()`.
 
 ### `passes/localcall.py`
 - **Role:** Handle `@local_call` helpers — inline at a single call site (alpha-renamed) or rename to an

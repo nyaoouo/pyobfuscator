@@ -26,8 +26,11 @@ out = obf_module(src, ModuleObfOptions(output="text", seed=1, pack_body=True, ke
 
 ## 0. 构建期常量（`precompile` / `precompile_arg`）
 
-`pyobfuscator` 顶层包导出的两个标记函数，可在**构建期**将计算结果作为字面常量折叠到混淆产物中。
-两者在运行时均为恒等 / 返回默认值，因此未混淆的源码仍可正常运行。
+`pyobfuscator` 顶层包导出的两个标记函数（`precompile`、`precompile_arg`），可在**构建期**将计算结果
+作为字面常量折叠到混淆产物中。`precompile` 既可作为 `precompile(expr)` 使用，也可作为 `@precompile`
+函数装饰器使用。运行时这些标记均为 no-op——表达式形式返回其值，装饰器形式则调用 thunk——因此未混淆的
+源码仍可正常运行并得到相同的常量。折叠后，标记的导入语句（`from pyobfuscator import …` 或
+`import pyobfuscator`）会从产物中移除，因此产物不依赖 pyobfuscator。
 
 ```python
 from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
@@ -53,6 +56,32 @@ out = obf_module(src, ModuleObfOptions(
 运行时：恒等函数（`return x`），未混淆的源码可正常运行。
 
 **约束：** `expr` 必须在构建期可求值（模块级函数 / 导入 / 字面量——不能是函数参数）。结果必须是字面量可表示的值（见下方显式报错列表）。构建期求值在**隔离子进程**中运行（副作用和崩溃被隔离；子进程继承构建环境的 `sys.path`）。
+
+### `@precompile`（装饰器形式）
+
+用 `@precompile` 装饰一个**模块级、零参数**的函数，会在构建期运行该函数并将其名字绑定为返回的常量——
+整个 `def` 被替换为 `NAME = <const>`。当计算常量需要语句（循环、局部变量）而非单个表达式时使用：
+
+```python
+from pyobfuscator import precompile, precompile_arg
+
+@precompile
+def LICENSE_DIGEST():           # 构建期 -> LICENSE_DIGEST = (72, 110, ...)
+    out = []
+    for i, c in enumerate(precompile_arg("LICENSE_KEY")):
+        out.append((ord(c) + i * 3) % 256)
+    return tuple(out)
+
+def license_ok(key):
+    return _scramble(key) == LICENSE_DIGEST
+```
+
+运行时装饰器会**调用** thunk 并绑定结果，因此未混淆时该名字持有的常量与混淆器折叠进去的完全一致（开发期
+运行保持一致）。`precompile_arg` 在 thunk 内部可用——构建期以注入的参数对 `NAME()` 求值（构建源码中装饰器
+被剥除，因此注入不受运行时调用的影响）。
+
+**约束（fail-loud）：** 函数必须是**模块级**、**同步**、**零参数**，且**只**带 `@precompile` 这一个装饰器。
+返回值必须是字面量可表示的（与 `precompile(expr)` 相同）。
 
 ### `precompile_arg(key[, default])`
 
@@ -97,7 +126,10 @@ build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大
 | `precompile_arg` 的参数数量 ∉ {1, 2}，或 key 不是字符串字面量 | 验证错误 |
 | `precompile_arg("KEY")`（单参数，必填）但 `"KEY"` 不在 `precompile_args` 中 | 缺少必要的构建参数 |
 | `precompile_args` 中的值不是字面量可表示的常量 | 选项验证错误 |
-| 子进程超时（> 30 秒） | 超时错误 |
+| 子进程超时（> `precompile_timeout`） | 超时错误 |
+| `@precompile` 用于嵌套（非模块级）函数 | 验证错误 |
+| `@precompile` 用于带参数的函数 | 验证错误 |
+| `@precompile` 与其他装饰器叠加 | 验证错误 |
 
 ---
 

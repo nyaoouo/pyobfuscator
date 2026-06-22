@@ -30,9 +30,13 @@ Two global properties hold for every flag:
 
 ## 0. Build-time constants (`precompile` / `precompile_arg`)
 
-Two markers, exported from the top-level `pyobfuscator` package, that fold a computed value into the
-obfuscated output as a literal constant at **build time**. Both are identity / default at runtime, so
-un-obfuscated source still runs.
+Two markers (`precompile`, `precompile_arg`), exported from the top-level `pyobfuscator` package, that
+fold a computed value into the obfuscated output as a literal constant at **build time**. `precompile`
+works both as `precompile(expr)` and as a `@precompile` function decorator. At runtime the markers are
+no-ops — the expression forms return their value and the decorator calls the thunk — so un-obfuscated
+source still runs and yields the same constant. After folding, the marker imports (`from pyobfuscator
+import …` or `import pyobfuscator`) are removed from the output, so it carries no dependency on
+pyobfuscator.
 
 ```python
 from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
@@ -64,6 +68,35 @@ At runtime: identity (`return x`), so un-obfuscated source runs.
 — NOT function parameters). The result must be literal-representable (see fail-loud list below).
 Build-time evaluation runs the module in an **isolated subprocess** (side effects and crashes are
 contained; the subprocess inherits the build env's `sys.path`).
+
+### `@precompile` (decorator form)
+
+Decorating a **module-level zero-argument function** with `@precompile` runs the function at build time
+and binds its name to the returned constant — the whole `def` is replaced by `NAME = <const>`. Use it
+when computing the constant needs statements (loops, locals), not just a single expression:
+
+```python
+from pyobfuscator import precompile, precompile_arg
+
+@precompile
+def LICENSE_DIGEST():           # at build -> LICENSE_DIGEST = (72, 110, ...)
+    out = []
+    for i, c in enumerate(precompile_arg("LICENSE_KEY")):
+        out.append((ord(c) + i * 3) % 256)
+    return tuple(out)
+
+def license_ok(key):
+    return _scramble(key) == LICENSE_DIGEST
+```
+
+At runtime the decorator **calls** the thunk and binds the result, so the un-obfuscated name holds the
+same constant the obfuscator folds in (the dev run stays consistent). `precompile_arg` works inside the
+thunk — the build evaluates `NAME()` with the injected args (the decorator is stripped in the build
+source so injection is unaffected by the runtime call).
+
+**Constraints (fail-loud):** the function must be **module-level**, **synchronous**, take **no
+arguments**, and carry **only** the `@precompile` decorator. The returned value must be
+literal-representable (same as `precompile(expr)`).
 
 ### `precompile_arg(key[, default])`
 
@@ -127,7 +160,10 @@ The build raises `ValueError` for:
 | `precompile_arg` called with arity ∉ {1, 2}, or with a non-string-literal key | Validation error |
 | `precompile_arg("KEY")` (1-arg, required) with `"KEY"` absent from `precompile_args` | Missing required build arg |
 | `precompile_args` value is not literal-representable | Options validation error |
-| Subprocess times out (> 30 s) | Timeout error |
+| Subprocess times out (> `precompile_timeout`) | Timeout error |
+| `@precompile` on a nested (non-module-level) function | Validation error |
+| `@precompile` on a function that takes arguments | Validation error |
+| `@precompile` combined with another decorator | Validation error |
 
 ---
 

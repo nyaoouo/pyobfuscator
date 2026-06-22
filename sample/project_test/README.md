@@ -42,7 +42,31 @@ python dist/main.py PYOBF-PRO-2026 hello   # -> OK:OLLEH
 python dist/main.py wrong-key hello        # -> DENIED
 ```
 
+Override the build-time license key from the CLI (CI/build injection — the key never appears in the
+shipped source):
+
+```sh
+python build_project.py --key "MY-CI-SECRET-9931"
+```
+
+## Analyze output
+
+After verification passes, the build writes self-contained HTML visualizations to `build/`
+(git-ignored), one pair per obfuscated module:
+
+| File | View |
+|------|------|
+| `build/main_analyze.html`, `build/secret_analyze.html` | CFF "mind map" — per-scope control-flow + per-pass source timeline (`analyze_html`) |
+| `build/main_protect.html`, `build/secret_protect.html` | packer shell — serialize→zlib→encrypt→encode→launcher size layers + the assembled launcher (`protect_html`) |
+
+These use the same options as the build, so `precompile` / `precompile_arg` fold identically. They are
+debug aids only — the *injected* license key is never in the source, so it never appears in them (the
+source view shows only the dev placeholder default).
+
 ## Notes
+
+- **`@precompile` decorator** — `app/secret.py` computes its license digest with a `@precompile` thunk
+  (`_LICENSE_DIGEST`), folded to a constant tuple at build (the key and the scramble both vanish).
 
 - **Shared oracle / key** come from one `seed`, so the entry and every satellite agree
   (`s_correct = f(seed)`) and build independently — updating one satellite needs only that rebuild.

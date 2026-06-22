@@ -56,7 +56,7 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 
 `_FUNC_PIPELINE` 和 `_MODULE_PIPELINE`（顺序相同，定义于 `__init__.py`）按以下顺序运行各 Pass；每个 Pass 在变换之前都会通过 `gate.py` 强制执行默认拒绝节点白名单：
 
-1. **`PrecompilePass`** — 在构建期对 `precompile(expr)` / `precompile_arg(key[, dflt])` 标记求值，并将每次调用替换为结果常量。**最先运行**，确保折叠后的常量随即流经所有下游字面量混淆 Pass。`precompile` 表达式的求值在隔离子进程中完成（模块级代码被安全 exec）；单独的、具有字面量 key/default 的 `precompile_arg` 在进程内解析。折叠完成后去除标记导入。
+1. **`PrecompilePass`** — 在构建期对 `precompile(expr)` / `precompile_arg(key[, dflt])` / `@precompile`（模块级零参数函数装饰器 → `NAME = <const>`）标记求值，并将每处替换为结果常量。**最先运行**，确保折叠后的常量随即流经所有下游字面量混淆 Pass。`precompile` 表达式与 `@precompile` thunk 的求值在隔离子进程中完成（模块级代码被安全 exec；thunk 的装饰器在构建源码中被剥除，因此其内部的 `precompile_arg` 注入不受影响）；单独的、具有字面量 key/default 的 `precompile_arg` 在进程内解析。折叠完成后去除标记导入。
 2. **`LocalCallPass`** — 处理 `@local_call`（内联/重命名被标记的辅助函数，去除标记导入）。
 3. **`DictIndirectPass`** — 将内部函数引用通过每作用域的 `_D[key]` 字典（`dict_indirect`）进行路由。
 4. **`NormalizePass`** — 将 `match` 脱糖为 if 链；可选的 `return_var` 改写（结构模式大声报错）。
@@ -141,7 +141,7 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 
 ### `cff/marker.py`
 - **职责：** 构建期标记函数（运行时为恒等 / 返回默认值；由引擎识别并处理）。
-- **对外接口：** `local_call(fn)`（恒等装饰器）；`precompile(x)`（返回 `x`）；`precompile_arg(key, default=None)`（返回 `default`）。三者均从顶层 `pyobfuscator` 包导出。
+- **对外接口：** `local_call(fn)`（恒等装饰器）；`precompile(x)`（返回 `x`；当 `x` 是零参数 thunk 时调用它——即 `@precompile` 装饰器形式）；`precompile_arg(key, default=None)`（返回 `default`）。三者均从顶层 `pyobfuscator` 包导出。
 - **交互：** `local_call` 由 `LocalCallPass` 处理；`precompile`/`precompile_arg` 由 `PrecompilePass` 处理。
 
 ### `cff/directives.py`
@@ -184,9 +184,9 @@ classify_files(root, entry, protect)   # → {相对路径 → Role}
 - **对外接口：** `Pass`（Protocol）、**`Pipeline`**（`run(tree, options)`）、`register`、`get`、`all_passes`。
 
 ### `passes/precompile.py`
-- **职责：** 对 `precompile` / `precompile_arg` 标记进行构建期偏求值。在流水线中**最先运行**。对每个最外层标记调用，在构建期计算出常量后替换该调用；下游字面量混淆 Pass 随即对其加密。
-- **对外接口：** `PrecompilePass`；`_build_marker_resolver`（别名感知的标记检测，支持 `from pyobfuscator import ...` 和 `import pyobfuscator` 形式）；`_Collect`（最外层标记调用收集器，不递归进入嵌套标记参数）；`_Replace`（AST 节点替换器）；`_strip_marker_imports`（从 `from pyobfuscator import ...` 中移除已折叠的标记名）；`_literal_node`（验证并解析 repr 字符串）；`_run_subprocess`（隔离子进程求值驱动器，JSON 输入/输出）；`_inproc_arg`（对具有字面量 key/default 的独立 `precompile_arg` 的快速进程内解析）。
-- **交互：** 必须在 `LocalCallPass` 和所有字面量混淆 Pass 之前运行；读取 `options.precompile_args`；使用子进程（`subprocess.run`）在隔离环境中 exec 模块源码并 eval 标记表达式（30 秒超时）。在 `supports()` 中容忍规范化前的 `match` 节点。
+- **职责：** 对 `precompile` / `precompile_arg` 标记（调用形式与 `@precompile` 装饰器形式）进行构建期偏求值。在流水线中**最先运行**。对每个最外层标记调用，计算常量后替换该调用；对每个 `@precompile` thunk，计算 `NAME()` 后将整个 `def` 替换为 `NAME = <const>`；下游字面量混淆 Pass 随即对常量加密。
+- **对外接口：** `PrecompilePass`；`_build_marker_resolver`（别名感知的标记检测，支持 `from pyobfuscator import ...` 和 `import pyobfuscator` 形式；`.ref` 解析裸装饰器引用）；`_decorated_thunks`（收集并校验模块级 `@precompile` 函数：模块级、同步、零参数、唯一装饰器）；`_Collect`（最外层标记调用收集器，跳过 `@precompile` thunk 体）；`_Replace`（替换已折叠的调用与 thunk `def`）；`_assign_node` / `_build_eval_src`（thunk `NAME = <const>` 构造；剥除 thunk 装饰器后的构建源码）；`_strip_marker_imports`（移除 `from pyobfuscator import …` 中已折叠的标记名，以及不再被引用的 `import pyobfuscator [as p]`，但保留仍被使用的别名）；`_literal_node`；`_run_subprocess`（隔离子进程驱动器，JSON 输入/输出）；`_inproc_arg`。
+- **交互：** 必须在 `LocalCallPass` 和所有字面量混淆 Pass 之前运行；读取 `options.precompile_args` 与 `options.precompile_timeout`；使用子进程（`subprocess.run`）在隔离环境中 exec 模块源码并 eval 标记表达式 / thunk 调用（结果按进程缓存）。在 `supports()` 中容忍规范化前的 `match` 节点。
 
 ### `passes/localcall.py`
 - **职责：** 处理 `@local_call` 辅助函数 — 在单个调用点内联（alpha 重命名）或重命名为不透明新鲜名称；去除标记装饰器 + 死导入。

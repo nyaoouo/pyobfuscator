@@ -102,7 +102,9 @@ A runnable demo is at `sample/project_test/` (build with `build_project.py`). Se
 ### Build-time constants (`precompile` / `precompile_arg`)
 
 Two markers let you fold a computed value into the obfuscated output as an encrypted constant at build
-time. Both are identity / default at runtime, so un-obfuscated source still runs.
+time. `precompile` works both as `precompile(expr)` and as a `@precompile` function decorator. At
+runtime they are no-ops (expression forms return their value; the decorator calls the thunk), so
+un-obfuscated source still runs and yields the same constant.
 
 ```python
 from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
@@ -123,6 +125,9 @@ out = obf_module(open("secret.py").read(), ModuleObfOptions(
 
 - **`precompile(expr)`** — evaluates `expr` at build (in an isolated subprocess) and replaces the call
   with the resulting constant. `expr` must be module-scope-evaluable (not a function parameter).
+- **`@precompile`** (decorator) — on a module-level zero-argument function: runs the thunk at build and
+  replaces the `def` with `NAME = <const>`, so a thunk (loops/locals) can compute the constant. The
+  decorator calls the thunk at runtime too, so the un-obfuscated name holds the same value.
 - **`precompile_arg("KEY")`** — required: replaced with `precompile_args["KEY"]`; build fails loudly if
   absent. **`precompile_arg("KEY", default)`** — optional: uses `default` when `"KEY"` is absent.
   The key lives only in the build script; it never appears in the source.

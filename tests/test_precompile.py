@@ -169,6 +169,151 @@ def test_precompile_caches_subprocess():
     assert t1 == t2                       # identical output (cache does not alter the result)
 
 
+# --- @precompile as a function decorator: NAME = <const computed by the thunk> ---
+
+def test_precompile_decorator_folds_to_const():
+    src = ("from pyobfuscator import precompile\n"
+           "@precompile\n"
+           "def TABLE():\n"
+           "    return [1, 2, 3]\n")
+    text, ns = _obf_exec(src, obf_strings=False)
+    assert ns["TABLE"] == [1, 2, 3]          # bound to the constant, not a function
+    assert not callable(ns["TABLE"])
+    assert "precompile" not in text
+    assert "def TABLE" not in text            # the def was replaced by an assignment
+
+
+def test_precompile_decorator_thunk_with_loop():
+    src = ("from pyobfuscator import precompile\n"
+           "@precompile\n"
+           "def DIGEST():\n"
+           "    out = []\n"
+           "    for i, c in enumerate('AB'):\n"
+           "        out.append((ord(c) + i) % 256)\n"
+           "    return tuple(out)\n")
+    text, ns = _obf_exec(src, obf_strings=False)
+    assert ns["DIGEST"] == (65, 67)           # 'A'+0, 'B'+1
+    assert "'AB'" not in text and '"AB"' not in text   # the thunk's input literal folded away
+
+
+def test_precompile_decorator_uses_precompile_arg():
+    src = ("from pyobfuscator import precompile, precompile_arg\n"
+           "def _scr(t):\n"
+           "    return tuple((ord(c) + i) % 256 for i, c in enumerate(t))\n"
+           "@precompile\n"
+           "def DIGEST():\n"
+           "    return _scr(precompile_arg('KEY', 'AB'))\n")
+    text, ns = _obf_exec(src, obf_strings=False, precompile_args={"KEY": "ZZ"})
+    assert ns["DIGEST"] == ((ord("Z")) % 256, (ord("Z") + 1) % 256)   # uses the INJECTED key
+    assert "ZZ" not in text and "precompile_arg" not in text
+
+
+def test_precompile_decorator_required_arg_missing_fails():
+    src = ("from pyobfuscator import precompile, precompile_arg\n"
+           "@precompile\n"
+           "def DIGEST():\n"
+           "    return precompile_arg('SECRET')\n")   # required, none provided
+    with pytest.raises(ValueError):
+        _obf(src)
+
+
+def test_precompile_decorator_autocall_at_runtime():
+    # The decorator marker CALLS the zero-arg thunk at runtime, so the un-obfuscated name holds the
+    # same constant the obfuscator folds in (consistency, not bare identity).
+    @precompile
+    def VALUE():
+        return 6 * 7
+    assert VALUE == 42 and not callable(VALUE)
+
+
+def test_precompile_decorator_composes_with_encryption():
+    src = ("from pyobfuscator import precompile\n"
+           "@precompile\n"
+           "def SECRET():\n"
+           "    return 'PYOBF-PRO-2026'\n"
+           "def check(k):\n"
+           "    return k == SECRET\n")
+    text, ns = _obf_exec(src, obf_ints=True, const_archive=True)
+    assert ns["check"]("PYOBF-PRO-2026") is True
+    assert ns["check"]("wrong") is False
+    assert "PYOBF-PRO-2026" not in text       # folded, then encrypted by const_archive
+
+
+def test_precompile_decorator_deterministic():
+    src = ("from pyobfuscator import precompile\n"
+           "@precompile\n"
+           "def T():\n"
+           "    return tuple(range(5))\n")
+    a = obf_module(src, ModuleObfOptions(output="text", seed=5))
+    b = obf_module(src, ModuleObfOptions(output="text", seed=5))
+    assert a == b
+
+
+def test_precompile_decorator_nested_fails():
+    src = ("from pyobfuscator import precompile\n"
+           "def outer():\n"
+           "    @precompile\n"
+           "    def inner():\n"
+           "        return 1\n"
+           "    return inner\n")        # @precompile only valid on module-level functions
+    with pytest.raises(ValueError):
+        _obf(src)
+
+
+def test_precompile_decorator_params_fail():
+    src = ("from pyobfuscator import precompile\n"
+           "@precompile\n"
+           "def T(x):\n"
+           "    return x\n")            # a thunk must take no arguments
+    with pytest.raises(ValueError):
+        _obf(src)
+
+
+def test_precompile_decorator_stacked_fails():
+    src = ("from pyobfuscator import precompile\n"
+           "def deco(f):\n"
+           "    return f\n"
+           "@precompile\n"
+           "@deco\n"
+           "def T():\n"
+           "    return 1\n")            # @precompile must be the only decorator
+    with pytest.raises(ValueError):
+        _obf(src)
+
+
+# --- attr-form (`import pyobfuscator`) leaves no dangling import ---
+
+def test_precompile_attr_form_strips_import():
+    text, ns = _obf_exec("import pyobfuscator\nR = pyobfuscator.precompile(2 + 3)\n", obf_strings=False)
+    assert ns["R"] == 5
+    assert "pyobfuscator" not in text          # folded + the now-unused import dropped
+
+
+def test_precompile_decorator_attr_form_strips_import():
+    src = ("import pyobfuscator\n"
+           "@pyobfuscator.precompile\n"
+           "def T():\n"
+           "    return [7, 8]\n")
+    text, ns = _obf_exec(src, obf_strings=False)
+    assert ns["T"] == [7, 8]
+    assert "pyobfuscator" not in text
+
+
+def test_precompile_attr_form_aliased_strips_import():
+    text, ns = _obf_exec("import pyobfuscator as pyo\nR = pyo.precompile(9)\n", obf_strings=False)
+    assert ns["R"] == 9
+    assert "pyobfuscator" not in text and "pyo" not in text
+
+
+def test_precompile_preserves_still_used_pyobfuscator_import():
+    # A genuine non-marker use of the alias keeps `import pyobfuscator` (no over-stripping).
+    src = ("import pyobfuscator\n"
+           "R = pyobfuscator.precompile(1)\n"
+           "NAME = pyobfuscator.__name__\n")
+    text = _obf(src, obf_strings=False)
+    assert "import pyobfuscator" in text and "pyobfuscator.__name__" in text
+
+
 # --- a module that doesn't use the markers is unaffected (no-op fast path) ---
 
 def test_no_markers_is_noop():
