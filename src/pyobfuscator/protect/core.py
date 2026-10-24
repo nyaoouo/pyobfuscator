@@ -413,6 +413,8 @@ def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dic
     fold_bi = use_bi or options.pack_decoy
     _bi_checks, _bi_spot, _bi_clean = _choose_bi(options)
     s_correct = (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK if fold_bi else s_path
+    if getattr(options, "machine_gate", None) is not None:
+        s_correct ^= _machine_publisher_selector(options)
 
     n_acc, n_kdf = namer.fresh("acc"), namer.fresh("kdf")
     n_S, n_ent, n_bi = namer.fresh("S"), namer.fresh("ent"), namer.fresh("bi")
@@ -544,6 +546,8 @@ def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dic
         s_terms.append(astutil.mul_const(n_poison, _P_MAGIC))
     if n_h:
         s_terms.append(astutil.name(n_h))
+    if getattr(options, "machine_gate", None) is not None:
+        s_terms.append(ast.Name(id="_pyx_publisher_selector", ctx=ast.Load()))
     sexpr = astutil.xor_chain(s_terms)
 
     # Neuter the debug set-APIs just before the exec tail (after the audit hook + oracle are in
@@ -798,6 +802,15 @@ def _build_oracle_install_stmts(oracle_name_str: str, oracle_var: str,
 # entry and every satellite, so files build independently (no ordering).
 # ============================================================================================
 
+def _machine_publisher_selector(options) -> int:
+    # CFF's selector is 64-bit; the outer AEAD/HKDF binds the full publisher digest.
+    from pyobfuscator_runtime.protocol import publisher_id
+
+    gate = options.machine_gate
+    return int(publisher_id(gate.publisher_encryption_public_pem,
+                            gate.publisher_signing_public_pem)[:16], 16)
+
+
 def project_s_correct(options) -> int:
     """Reproduce `_assemble_launcher`'s `s_correct` from `options` alone (seed + builtin-check
     options). Identical draw order to `_assemble_launcher`, so the entry's internal `s_correct`, the
@@ -809,7 +822,9 @@ def project_s_correct(options) -> int:
     fold_bi = bool(options.integrity_selfcheck or options.pack_decoy)
     if fold_bi:
         _checks, _spot, _bi_clean = _choose_bi(options)
-        return (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK
+        s_path = (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK
+    if getattr(options, "machine_gate", None) is not None:
+        s_path ^= _machine_publisher_selector(options)
     return s_path
 
 

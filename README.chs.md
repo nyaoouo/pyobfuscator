@@ -1,5 +1,7 @@
 # pyobfuscator
 
+机器验证入口：[机器验证说明](docs/MACHINE.chs.md)。
+
 PyInstaller 打包及逐项支持程度：[`docs/PYINSTALLER.chs.md`](docs/PYINSTALLER.chs.md)。
 
 一个**源码级 Python 控制流扁平化混淆器**，并附带一套可选的、分层的
@@ -10,7 +12,8 @@ PyInstaller 打包及逐项支持程度：[`docs/PYINSTALLER.chs.md`](docs/PYINS
 
 每一项变换都经过**对 CPython 的差分等价门校验**：在未被篡改的路径上，混淆/打包后的程序与原程序
 **行为完全一致**（返回值、异常类型+消息、stdout、参数变更，跨多个 seed）。整体是 **fail-loud**
-的：默认拒绝的白名单门会拒绝任何它无法证明可保持语义的构造。输出对给定的源码 + seed + flag 组合是**确定性的**。
+的：默认拒绝的白名单门会拒绝任何它无法证明可保持语义的构造。普通输出对给定的源码 + seed + flag 组合是**确定性的**；机器验证产物每次使用新的随机内容密钥。
+机器验证会在原程序启动前增加授权判断，因此未授权路径有意改变程序行为。
 
 > **诚实的威胁模型。** 纯 Python 保护是**混淆级，而非密码学级**：解密例程必然出现在可见的启动器
 > 代码里，因此铁了心的*动态*攻击者（调试器、`exec`/`compile` 钩子，或被 patch 的解释器）只要在
@@ -24,7 +27,8 @@ PyInstaller 打包及逐项支持程度：[`docs/PYINSTALLER.chs.md`](docs/PYINS
 ## 依赖要求
 
 - Python **3.11+**（混淆器本身及其输出均如此）。完整的 TEXT 栈已在 3.12 和 3.14 上验证。
-- 无运行时依赖。测试套件需要 `pytest`（`pip install -e .[dev]`）。
+- 普通产物无运行时依赖。机器验证产物需要 `pyobfuscator_runtime` 和 `cryptography`
+  （`pip install -e .[machine]`）。测试套件需要 `pytest`（`pip install -e .[dev]`）。
 
 ## 快速上手
 

@@ -70,6 +70,7 @@ write_pyinstaller_hook("src/myapp", "build/pyi_rth_pyobfuscator.py",
 | `detect_trace`、`detect_tools`、`detect_env`、`key_binds_env`（`protect_level="full"`） | 组合实测 | 干净启动选择真实体；调试器、覆盖率或其他 hook 可能有意触发诱饵。 |
 | `protect_level="light"` / `"full"` | `full` 组合实测；`light` 预计兼容 | `light` 是不含环境检测的 `full` 子集，未另建冻结用例。 |
 | `detect_stack` | 组合实测 | `onedir`、`onefile` 和两层 `compress_output` 下信号均为 `0`，并走真实体。生成的 hook 在入口前返回；额外用 Python `exec`/`runpy` 包装入口仍会被视为外来调用。 |
+| `machine_gate` 与 `detect_stack` | `onedir`、`onefile` 冻结实测 | 独立混淆的 entrance 与 `pyobfuscator_runtime` 均被收集；未授权时正文不运行，授权后进入真实路径。栈判定已计入验证包装层；`onedir` 集中导入的多文件项目也已通过。冻结 TPM 尚未实测。详见[机器验证](MACHINE.chs.md)。 |
 | `attest`、`attest_density`、`attest_inflate`、`attest_target_blocks` | 默认值组合实测 | 默认互证参数在两种模式运行；自定义密度未单测。 |
 | `cohash_integrity` | 有条件，组合实测 | TEXT 会锁定构建时字节码版本；两种冻结模式均使用构建解释器，换版本须重建。 |
 | `body_cohash` | 有条件，组合实测 | 使用 `attest=True`、`output="text"`、`pack_format="bytecode"`；两种冻结模式均保持 `STACKSIG 0` 并运行真实体。更换 Python 版本须重建。 |

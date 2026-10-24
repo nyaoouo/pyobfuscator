@@ -20,8 +20,8 @@ Conventions used below:
 
 Two global properties hold for every flag:
 
-- **Deterministic.** Same `source + seed + flags` ⇒ byte-identical output. With `seed=None` a random
-  seed is drawn per call.
+- **Deterministic by default.** Same `source + seed + flags` ⇒ byte-identical ordinary output.
+  `machine_gate` generates a fresh random content key and nonce for every artifact.
 - **Equivalence-gated.** On the untampered path the obfuscated program is behaviour-identical to the
   original (return value, exception type+message, stdout, argument mutation). Anything the engine cannot
   provably preserve is rejected fail-loud (see `on_unsupported`).
@@ -340,6 +340,14 @@ All default **off** and **out of the presets** — they can false-positive under
 ---
 
 ## 12. Module-only options (`ModuleObfOptions`)
+
+`machine_gate: MachineGateOptions | None` enables asymmetric machine authorization before
+the main body decrypts. It requires `machine_record_out` on `obf_module` or `obf_project` to
+retain the fresh content key on the issuer side. The `entrance=(file, interact_func, on_fail)`
+file is packed independently; only its transport and failure functions are caller-defined.
+See [Machine-gated entrypoints](MACHINE.md) for the API, key policies, issuer operation, project
+constraints, and threat model. The machine gate adds a `pyobfuscator_runtime` and `cryptography`
+dependency to the distributed program.
 
 | Option (default) | Effect | Impact | Limitations |
 |---|---|---|---|

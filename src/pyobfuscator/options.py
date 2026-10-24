@@ -17,6 +17,23 @@ class UnsupportedPolicy(Enum):
     # SKIP = "skip"
 
 
+@dataclass
+class MachineGateOptions:
+    """Publisher keys and the independent entrance module for a gated entrypoint.
+
+    `entrance` names a Python source file plus its `interact_func` and `on_fail` functions.
+    Publisher private keys and the artifact content key remain outside the emitted program.
+    """
+    entrance: tuple[str, str, str]
+    publisher_encryption_public_pem: bytes
+    publisher_signing_public_pem: bytes
+    artifact_id: str
+    device_key_name: str
+    device_policy: str = "tpm_required"
+    mode: str = "online"
+    offline_nonce: bytes | None = None
+
+
 def _coerce_output(value) -> OutputFormat:
     if isinstance(value, OutputFormat):
         return value
@@ -118,6 +135,7 @@ class ObfOptions:
 
 @dataclass
 class ModuleObfOptions(ObfOptions):
+    machine_gate: MachineGateOptions | None = None
     emit_pyi: bool = False
     single_file_interface: bool = False
     exports: list[str] = field(default_factory=list)

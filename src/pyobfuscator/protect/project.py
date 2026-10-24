@@ -84,7 +84,8 @@ def _out_rel(rel: str, options) -> str:
 
 
 def obf_project(*, root: str, out: str, entry: str, protect=None, options=None,
-                import_hook: bool = False, shared_oracle_decouple: bool = False) -> dict:
+                import_hook: bool = False, shared_oracle_decouple: bool = False,
+                machine_record_out: dict | None = None) -> dict:
     """Obfuscate a multi-module project rooted at ``root`` into ``out``; return a
     ``{rel_path -> Role.value}`` manifest.
 
@@ -110,10 +111,20 @@ def obf_project(*, root: str, out: str, entry: str, protect=None, options=None,
     from . import core
     options = options or ModuleObfOptions()
     roles = classify_files(root, entry=entry, protect=protect)
+    if options.machine_gate is not None:
+        if machine_record_out is None:
+            raise ValueError("machine gate requires machine_record_out to retain the server content key")
+        if options.machine_gate.artifact_id in machine_record_out:
+            raise ValueError("machine_record_out already contains artifact_id")
     has_protect = any(r is Role.PROTECT for r in roles.values())
     shared = bool(has_protect and getattr(options, "attest", False)
                   and options.pack_body and options.key_from_cff
                   and options.output in (OutputFormat.TEXT, OutputFormat.PYC))
+
+    if options.machine_gate is not None and has_protect and not (shared and import_hook):
+        raise ValueError("machine-gated protected projects require shared runtime and import_hook=True")
+    if options.machine_gate is not None and shared_oracle_decouple:
+        raise ValueError("machine-gated projects do not allow shared_oracle_decouple=True")
 
     if import_hook and not shared:
         raise ValueError(
@@ -166,7 +177,9 @@ def obf_project(*, root: str, out: str, entry: str, protect=None, options=None,
     if shared:
         _emit_to(entry_out, obf_module(entry_src, options, publish_runtime=True,
                                        shared_oracle_decouple=shared_oracle_decouple,
-                                       runtime_registry=(registry if import_hook else None)))
+                                       runtime_registry=(registry if import_hook else None),
+                                       machine_record_out=machine_record_out))
     else:
-        _emit_to(entry_out, obf_module(entry_src, options))
+        _emit_to(entry_out, obf_module(entry_src, options,
+                                       machine_record_out=machine_record_out))
     return {rel: role.value for rel, role in roles.items()}

@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
+machine = ["cryptography>=42"]
 dev = ["pytest>=8"]
 pyinstaller = ["pyinstaller>=6"]
 

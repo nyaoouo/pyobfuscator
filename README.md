@@ -1,6 +1,7 @@
 # pyobfuscator
 
 PyInstaller distribution: [`docs/PYINSTALLER.md`](docs/PYINSTALLER.md).
+Machine-gated entrypoints: [`docs/MACHINE.md`](docs/MACHINE.md).
 
 A source-level **Python control-flow-flattening obfuscator** with an optional, layered
 **Python-layer software-protection stack** (compressing + encrypting packer → control-flow-derived key
@@ -12,7 +13,9 @@ A source-level **Python control-flow-flattening obfuscator** with an optional, l
 Every transformation is **differential-equivalence-gated against CPython**: on the untampered path the
 obfuscated/packed program is behaviour-identical to the original (return value, exception type+message,
 stdout, argument mutation, across seeds). It is **fail-loud**: a default-deny allowlist rejects any
-construct it cannot provably preserve. Output is **deterministic** for a given source + seed + flags.
+construct it cannot provably preserve. Ordinary output is **deterministic** for a given source +
+seed + flags; machine-gated output uses a fresh random content key.
+The machine gate deliberately adds an authorization decision before the original program starts.
 
 > **Honest threat model.** Pure-Python protection is **obfuscation-grade, not crypto-grade**: the
 > decryptor must exist in visible launcher code, so a determined *dynamic* attacker (debugger,
@@ -28,7 +31,9 @@ construct it cannot provably preserve. Output is **deterministic** for a given s
 ## Requirements
 
 - Python **3.11+** (the obfuscator and its output). The full TEXT stack is exercised on 3.12 and 3.14.
-- No runtime dependencies. `pytest` for the test suite (`pip install -e .[dev]`).
+- No runtime dependencies for ordinary output. Machine-gated output requires
+  `pyobfuscator_runtime` and `cryptography` (`pip install -e .[machine]`).
+  `pytest` for the test suite (`pip install -e .[dev]`).
 
 ## Quick start
 

@@ -298,6 +298,12 @@ build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大
 
 ## 12. 仅限模块的选项（`ModuleObfOptions`）
 
+`machine_gate: MachineGateOptions | None` 在解密主脚本前执行机器验证。构建时须向
+`obf_module` 或 `obf_project` 传入 `machine_record_out`，由发行方保存随机内容密钥。
+`entrance=(file, interact_func, on_fail)` 文件独立混淆；调用方只负责凭证传输和失败处理。
+详见[机器验证说明](MACHINE.chs.md)。启用后分发程序依赖 `pyobfuscator_runtime` 与
+`cryptography`。
+
 | Option (default) | Effect | Impact | Limitations |
 |---|---|---|---|
 | `decoy_src` (`None`) | `pack_decoy` 使用的诱饵程序源码。 | 提供构建时精心编写的真实诱饵。 | `None` ⇒ 使用内置哨兵诱饵。 |

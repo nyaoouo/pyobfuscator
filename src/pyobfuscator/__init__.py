@@ -5,7 +5,7 @@ import ast
 import sys
 import warnings
 
-from .options import ObfOptions, ModuleObfOptions, OutputFormat, UnsupportedPolicy
+from .options import ObfOptions, ModuleObfOptions, MachineGateOptions, OutputFormat, UnsupportedPolicy
 from .pyinstaller import collect_pyinstaller_imports, write_pyinstaller_hook
 from .cff.passes.base import Pipeline
 from .cff.passes.flatten import FlattenPass
@@ -32,7 +32,7 @@ __version__ = "0.0.0"
 __all__ = [
     "obf_func", "obf_module", "obf_project",
     "collect_pyinstaller_imports", "write_pyinstaller_hook",
-    "ObfOptions", "ModuleObfOptions", "OutputFormat", "UnsupportedPolicy",
+    "ObfOptions", "ModuleObfOptions", "MachineGateOptions", "OutputFormat", "UnsupportedPolicy",
     "build_model", "analyze_html", "build_protect_model", "protect_html",
     "local_call", "precompile", "precompile_arg", "load_bytes",
     "cache_tag", "sourceless_pyc_name", "MIN_SUPPORTED_PYTHON",
@@ -199,7 +199,8 @@ def obf_func(src, options: ObfOptions | None = None, *, sourcemap_out: dict | No
 
 def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: dict | None = None,
                publish_runtime: bool = False, shared_oracle_decouple: bool = False,
-               runtime_registry: dict | None = None):
+               runtime_registry: dict | None = None,
+               machine_record_out: dict | None = None):
     options = options or ModuleObfOptions()
     if publish_runtime and not getattr(options, "attest", False):
         # The shared multi-module runtime publishes the attestation oracle (and the decrypt fn keyed
@@ -280,4 +281,7 @@ def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: d
                                 decoy=True, rng=random.Random((options.seed or 0) ^ 0x0C0FFEE))
         if req_min:   # result is the outermost plaintext TEXT bootstrap (str) -> prepend the guard above it
             result = _version_guard_src() + result
+    if options.machine_gate is not None:
+        from .machine.build import wrap_machine_entry
+        result = wrap_machine_entry(result, options, machine_record_out)
     return result

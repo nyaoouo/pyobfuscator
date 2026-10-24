@@ -130,6 +130,8 @@ class StackDetector(Detector):
         # "None above the entry" verdict. (depth==1 / uncompressed: the launcher IS the entry module and
         # has no genuine ancestor, so only the first probe applies; byte-identical to the original.)
         depth = (ctx.compress_rounds + 1) if ctx.compress_output else 1
+        if getattr(ctx, "machine_gate", False):
+            depth += 1
 
         def _getframe():
             return ast.Call(func=ast.Attribute(value=name(ctx.sys), attr="_getframe", ctx=ast.Load()),
@@ -182,6 +184,7 @@ def build_detection(options, namer, poison_cell=None):
     ctx.poison_cell = poison_cell
     ctx.compress_output = getattr(options, "compress_output", False)
     ctx.compress_rounds = getattr(options, "compress_rounds", 1)
+    ctx.machine_gate = getattr(options, "machine_gate", None) is not None
     stmts = []
     if any(d.needs_sys for d in active):
         ctx.sys = namer.fresh("sys")
