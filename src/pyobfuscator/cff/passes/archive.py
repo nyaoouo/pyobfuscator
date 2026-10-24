@@ -27,10 +27,11 @@ class ArchivePass:
         return SupportSet(allowed=FLATTEN_ALLOWED)
 
     def transform(self, tree: ast.AST, options: ObfOptions) -> ast.AST:
-        if not options.const_archive:
+        if not options.const_archive and not any(
+                getattr(node, "_pyobf_force_archive", False) for node in ast.walk(tree)):
             return tree
         skip = _collect_skip(tree)
-        col = _Collector(skip)
+        col = _Collector(skip, force_only=not options.const_archive)
         col.visit(tree)
         if not col.values:
             return tree
@@ -92,13 +93,16 @@ def _eligible_value(v):
 
 class _Collector(ast.NodeVisitor):
     """Collect eligible Constant nodes + the unique value list (order-preserving, deduped)."""
-    def __init__(self, skip):
+    def __init__(self, skip, *, force_only=False):
         self.skip = skip
+        self.force_only = force_only
         self.nodes = []              # Constant nodes to replace
         self.values = []             # unique values, order-preserving
         self._seen = {}
     def visit_Constant(self, node):
         if id(node) in self.skip:
+            return
+        if self.force_only and not getattr(node, "_pyobf_force_archive", False):
             return
         if getattr(node, "_pyobf_no_archive", False):
             return                   # e.g. name-vault dict keys: kept inline for state-keying (key_consts)

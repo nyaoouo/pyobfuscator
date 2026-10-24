@@ -92,9 +92,9 @@ manifest = obf_project(
 
 可运行的演示位于 `sample/project_test/`（通过 `build_project.py` 构建）。完整参数说明（包括 `import_hook` 和 `shared_oracle_decouple`）详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**。
 
-### 构建期常量（`precompile` / `precompile_arg`）
+### 构建期常量与文件（`precompile` / `precompile_arg` / `load_bytes`）
 
-两个标记函数可在构建期将计算结果作为加密常量折叠到混淆产物中。`precompile` 既可作为 `precompile(expr)`，也可作为 `@precompile` 函数装饰器使用。运行时它们均为 no-op（表达式形式返回其值，装饰器形式调用 thunk），未混淆的源码可正常运行并得到相同的常量。
+`precompile` 和 `precompile_arg` 在构建期把计算结果折叠进混淆产物。`precompile` 可作为 `precompile(expr)` 或 `@precompile` 函数装饰器使用；未混淆时，表达式形式返回其值，装饰器调用 thunk。`load_bytes` 在未混淆时读文件，混淆时则把文件字节存进加密归档。
 
 ```python
 from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
@@ -117,6 +117,7 @@ out = obf_module(open("secret.py").read(), ModuleObfOptions(
 - **`@precompile`**（装饰器）— 用于模块级零参数函数：构建期运行该 thunk，并将 `def` 替换为 `NAME = <const>`，从而用 thunk（循环 / 局部变量）计算常量。运行时装饰器同样会调用 thunk，使未混淆的名字持有相同的值。
 - **`precompile_arg("KEY")`** — 必填形式：替换为 `precompile_args["KEY"]`；若缺失则构建大声报错。**`precompile_arg("KEY", default)`** — 可选形式：`"KEY"` 不存在时使用 `default`。密钥仅存在于构建脚本中，源码中不会出现。
 - **`ObfOptions.precompile_args`** — 传递给 `obf_func` / `obf_module` / `obf_project` 的注入值字典。
+- **`load_bytes("assets/data.bin")`** — 未混淆源码每次调用时直接读文件；混淆时在构建期读取，运行时从加密常量归档取回字节，即使 `const_archive=False` 也会归档。构建时路径须在模块作用域可求值；相对路径基于当前工作目录。混淆产物旁不必保留该文件。
 
 折叠后的常量随即流经 `const_archive` / `obf_ints` / `obf_strings` 并被加密。完整参考（包括显式报错条件和确定性说明）详见 **[`docs/OPTIONS.chs.md`](docs/OPTIONS.chs.md)**（§0）。
 

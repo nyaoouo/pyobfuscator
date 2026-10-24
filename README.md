@@ -101,12 +101,12 @@ A runnable demo is at `sample/project_test/` (build with `build_project.py`). Se
 **[`docs/OPTIONS.md`](docs/OPTIONS.md)** (§12b) for the full parameter reference including
 `import_hook` and `shared_oracle_decouple`.
 
-### Build-time constants (`precompile` / `precompile_arg`)
+### Build-time constants and files (`precompile` / `precompile_arg` / `load_bytes`)
 
-Two markers let you fold a computed value into the obfuscated output as an encrypted constant at build
-time. `precompile` works both as `precompile(expr)` and as a `@precompile` function decorator. At
-runtime they are no-ops (expression forms return their value; the decorator calls the thunk), so
-un-obfuscated source still runs and yields the same constant.
+`precompile` and `precompile_arg` fold computed values into the obfuscated output at build time.
+`precompile` works as `precompile(expr)` or a `@precompile` decorator. In plain source, the expression
+forms return their values and the decorator calls its thunk. `load_bytes` reads a file in plain source
+and stores its bytes in the encrypted archive during obfuscation.
 
 ```python
 from pyobfuscator import precompile, precompile_arg, obf_module, ModuleObfOptions
@@ -135,6 +135,10 @@ out = obf_module(open("secret.py").read(), ModuleObfOptions(
   The key lives only in the build script; it never appears in the source.
 - **`ObfOptions.precompile_args`** — dict passed to `obf_func` / `obf_module` / `obf_project` with
   the injected values.
+- **`load_bytes("assets/data.bin")`** — plain source reads the file each time it runs. An obfuscated
+  module reads it once at build and retrieves the bytes from the encrypted constant archive at runtime,
+  even when `const_archive=False`. The build path must be evaluable at module scope; relative paths
+  use the current working directory. The file itself is not needed beside the obfuscated output.
 
 The folded constant then flows through `const_archive` / `obf_ints` / `obf_strings` and gets
 encrypted. See **[`docs/OPTIONS.md`](docs/OPTIONS.md)** (§0) for the full reference including

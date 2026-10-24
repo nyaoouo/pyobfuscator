@@ -1,4 +1,4 @@
-"""PrecompilePass — build-time partial evaluation of the `precompile` / `precompile_arg` markers.
+"""PrecompilePass — build-time evaluation of precompile, precompile_arg, and load_bytes.
 
 Runs FIRST in the pipeline. It computes constants at build time and folds them in:
 
@@ -6,14 +6,16 @@ Runs FIRST in the pipeline. It computes constants at build time and folds them i
                                        replace the OUTERMOST marker call with the resulting constant.
   * ``precompile_arg(key[, dflt])`` -> the value the build script injected in ``options.precompile_args``
                                        for ``key`` (or ``dflt``; required if no default is given).
+  * ``load_bytes('path')``         -> read bytes at build and force the result into ArchivePass.
   * ``@precompile`` on a module-level zero-argument function -> run the function at build and replace the
                                        whole ``def`` with ``NAME = <const>`` (a thunk: loops/locals can
                                        compute a build constant, not just one expression).
 
-Build-time evaluation runs the user's module in an ISOLATED SUBPROCESS (side effects and crashes are
-contained); standalone ``precompile_arg`` with a literal key/default is resolved in-process (no module
-exec needed). Nested markers (e.g. ``precompile(f(precompile_arg("K")))``) resolve during the subprocess
-eval — only the outermost call is replaced. For a thunk, the ``@precompile`` decorator is stripped in the
+Build-time expression evaluation runs the user's module in an ISOLATED SUBPROCESS (side effects and
+crashes are contained); standalone ``precompile_arg`` and literal-path ``load_bytes`` are resolved
+in-process (no module exec needed). Nested markers (e.g.
+``precompile(f(precompile_arg("K")))``) resolve during the subprocess eval — only the outermost call is
+replaced. For a thunk, the ``@precompile`` decorator is stripped in the
 build source so the subprocess defines a plain function and evaluates ``NAME()`` with build-aware markers
 (so ``precompile_arg`` injection works inside the thunk). The markers are no-ops at runtime — the
 expression forms return their value and the decorator CALLS the thunk — so un-obfuscated source still
@@ -27,19 +29,19 @@ import hashlib
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from ..gate import SupportSet
 from ...options import ObfOptions
 from .flatten import FLATTEN_ALLOWED
 from .normalize import _MATCH_NODES as _NM_NODES
 
-_MARKERS = ("precompile", "precompile_arg")
+_MARKERS = ("precompile", "precompile_arg", "load_bytes")
 _DEFAULT_TIMEOUT = 30.0  # seconds; overridable via options.precompile_timeout
 
 # Process-level cache of batched build-eval results, keyed by (module source, injected args, exprs).
-# Build-eval is deterministic for pure exprs (the documented contract), so identical re-builds in one
-# process — determinism checks, partial-update rebuilds, obf_project re-runs — reuse the result instead
-# of re-spawning the subprocess. Module-level so it resets per process (no cross-run staleness).
+# Build-eval is deterministic for pure exprs (the documented contract). Calls involving load_bytes
+# bypass the cache so changed file contents are read again. Module-level cache resets per process.
 _CACHE: dict[str, list[str]] = {}
 _subprocess_spawns = 0  # instrumentation for tests (count of actual subprocess launches)
 
@@ -133,6 +135,12 @@ def _literal_node(repr_str: str, desc: str) -> ast.expr:
     return ast.parse(repr_str, mode="eval").body
 
 
+def _mark_bytes_for_archive(node: ast.AST) -> None:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Constant) and type(child.value) is bytes:
+            child._pyobf_force_archive = True
+
+
 class _Collect(ast.NodeVisitor):
     """Collect OUTERMOST marker calls (do not descend into a marker call's args — nested markers
     are resolved during the eval and subsumed by replacing the outer call). Skip the bodies of
@@ -183,8 +191,8 @@ class _Replace(ast.NodeTransformer):
 
 
 def _strip_marker_imports(tree: ast.AST):
-    """Drop precompile/precompile_arg from `from pyobfuscator import ...`, and a now-unused
-    `import pyobfuscator [as p]` (the attr-form `pyobfuscator.precompile(...)` has been folded away).
+    """Drop precompile/precompile_arg/load_bytes from `from pyobfuscator import ...`, and a now-unused
+    `import pyobfuscator [as p]` (attribute-form marker calls have been folded away).
     Run AFTER folding so references are already gone; an `import pyobfuscator` alias that is still
     referenced (a genuine non-marker use) is kept, so this never breaks a real dependency."""
     # Names still loaded somewhere -> decides whether an `import pyobfuscator` alias is now dead.
@@ -264,7 +272,9 @@ class PrecompilePass:
         build_args = dict(getattr(options, "precompile_args", None) or {})
 
         thunks = _decorated_thunks(tree, resolve)   # validates @precompile decorator usage (fail-loud)
-        has_calls = any(resolve(n) for n in ast.walk(tree) if isinstance(n, ast.Call))
+        marker_calls = [(n, resolve(n)) for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        has_calls = any(marker for _, marker in marker_calls)
+        has_load_bytes = any(marker == "load_bytes" for _, marker in marker_calls)
         # Fast no-op: no markers at all (no calls and no decorated thunks).
         if not thunks and not has_calls:
             return tree
@@ -285,14 +295,25 @@ class PrecompilePass:
         collector.visit(tree)
 
         reprs: dict[int, str] = {}        # id(call) -> repr string
+        archived: set[int] = set()        # file bytes always use the archive
         batch: list[ast.Call] = []        # calls needing the subprocess
         for call, marker in collector.found:
+            if marker == "load_bytes":
+                filepath = _string_literal(call.args[0])
+                archived.add(id(call))
+                if filepath is not None:
+                    try:
+                        reprs[id(call)] = repr(Path(filepath).read_bytes())
+                    except OSError as exc:
+                        raise ValueError("load_bytes(%r): could not read file at build time: %s"
+                                         % (filepath, exc)) from exc
+                    continue
             if marker == "precompile_arg":
                 got = self._inproc_arg(call, build_args)
                 if got is not None:
                     reprs[id(call)] = got
                     continue
-            batch.append(call)            # precompile, or precompile_arg w/ non-literal default
+            batch.append(call)            # expressions requiring build-eval subprocess
 
         thunk_reprs: dict[int, str] = {}  # id(funcdef) -> repr string
         if batch or thunks:
@@ -300,17 +321,33 @@ class PrecompilePass:
             call_exprs = [ast.unparse(c) for c in batch]
             thunk_exprs = [f.name + "()" for f in thunks]
             timeout = float(getattr(options, "precompile_timeout", _DEFAULT_TIMEOUT))
-            results = self._run_subprocess(module_src, call_exprs + thunk_exprs, build_args, timeout)
+            results = self._run_subprocess(module_src, call_exprs + thunk_exprs, build_args, timeout,
+                                           cacheable=not has_load_bytes)
             for call, r in zip(batch, results[:len(call_exprs)]):
+                if resolve(call) == "load_bytes":
+                    try:
+                        value = ast.literal_eval(r)
+                    except (ValueError, SyntaxError) as exc:
+                        raise ValueError("load_bytes(filepath) must return bytes at build time") from exc
+                    if type(value) is not bytes:
+                        raise ValueError("load_bytes(filepath) must return bytes at build time")
                 reprs[id(call)] = r
             for f, r in zip(thunks, results[len(call_exprs):]):
                 thunk_reprs[id(f)] = r
 
         call_nodes = {cid: _literal_node(r, "a precompile expression") for cid, r in reprs.items()}
+        for call, marker in collector.found:
+            # A precompile expression may reach load_bytes through a helper function, so conservatively
+            # archive any bytes it returns when this module uses load_bytes at all.
+            if id(call) in archived or (has_load_bytes and marker == "precompile"):
+                _mark_bytes_for_archive(call_nodes[id(call)])
         name_by_id = {id(f): f.name for f in thunks}
         func_nodes = {fid: _assign_node(name_by_id[fid],
                                         _literal_node(r, "@precompile function %r" % name_by_id[fid]))
                       for fid, r in thunk_reprs.items()}
+        if has_load_bytes:
+            for func in thunks:
+                _mark_bytes_for_archive(func_nodes[id(func)].value)
         new_tree = _Replace(call_nodes, func_nodes).visit(tree)
         _strip_marker_imports(new_tree)
         ast.fix_missing_locations(new_tree)
@@ -328,6 +365,9 @@ class PrecompilePass:
             if marker == "precompile":
                 if len(node.args) != 1:
                     raise ValueError("precompile(expr) takes exactly one argument")
+            elif marker == "load_bytes":
+                if len(node.args) != 1:
+                    raise ValueError("load_bytes(filepath) takes exactly one path argument")
             else:  # precompile_arg
                 if len(node.args) not in (1, 2):
                     raise ValueError("precompile_arg(key[, default]) takes one or two arguments")
@@ -351,11 +391,12 @@ class PrecompilePass:
             return repr(ast.literal_eval(default))
         return None  # non-literal default -> subprocess
 
-    def _run_subprocess(self, module_src, exprs, build_args, timeout) -> list[str]:
+    def _run_subprocess(self, module_src, exprs, build_args, timeout, *, cacheable=True) -> list[str]:
         key = _cache_key(module_src, build_args, exprs)
-        cached = _CACHE.get(key)
-        if cached is not None:
-            return cached
+        if cacheable:
+            cached = _CACHE.get(key)
+            if cached is not None:
+                return cached
         payload = {"module_src": module_src, "exprs": exprs,
                    "build_args": {k: repr(v) for k, v in build_args.items()}}
         global _subprocess_spawns
@@ -380,5 +421,6 @@ class PrecompilePass:
                 raise ValueError("precompile: failed to evaluate `%s` at build time: %s"
                                  % (ex, res.get("err")))
             out.append(res["repr"])
-        _CACHE[key] = out
+        if cacheable:
+            _CACHE[key] = out
         return out

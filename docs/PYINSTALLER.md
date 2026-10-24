@@ -61,6 +61,7 @@ The statuses below are scoped to a **TEXT entry**, with source or bytecode body 
 | `slot_vars`, `stack_calls`, `hide_external_args`, `split_calls` | Expected | Source-level rewrites; no separate frozen case yet. |
 | `return_var`, `dedup`, `state_delta`, `dispatch_tree`, `junk_code`, `dict_indirect` | Expected | Dispatcher rewrites; no separate frozen case yet. |
 | `precompile`, `precompile_arg`, `precompile_args`, `precompile_timeout` | Expected | Build-time only. Add imports to the hook only if the shipped code still needs them. |
+| `load_bytes("path")` | Frozen test | File bytes are forced into the encrypted archive. The asset was removed before an `onedir` build and the frozen entry still returned its bytes with `STACKSIG 0`; a marker-only import is omitted from the generated hook. |
 | `strip_debug`, `on_unsupported`, `seed`, `emit_sourcemap` | Build-time or emission controls | `strip_debug` affects AST/PYC position metadata rather than the tested TEXT launcher. `on_unsupported` rejects unsupported constructs before packaging; seed and source map do not change frozen loading. |
 | `pack_body`, `pack_format="source"` / `"bytecode"`, `key_from_cff` | Combined test | Both packed formats and the derived key ran in `onedir` and `onefile`. Bytecode format locks the body to the build Python version. |
 | `integrity_selfcheck`, `builtin_checks`, `builtin_spot_count` | Combined test for defaults | Default builtin check and decoy selection ran in both modes; custom check lists were not tested. |

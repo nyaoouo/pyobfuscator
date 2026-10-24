@@ -1,5 +1,7 @@
-"""Marker decorators recognized by pyobfuscator. At runtime they are identity (no-ops), so
-annotated source runs normally; the obfuscator strips them and acts on the annotation."""
+"""Build and call markers recognized by pyobfuscator.
+
+Plain source retains its expected behavior; the obfuscator folds or removes the markers.
+"""
 from __future__ import annotations
 
 
@@ -43,3 +45,13 @@ def precompile_arg(key, default=None):
     Returns `default` at runtime, so un-obfuscated source runs with a dev placeholder. With only the
     `key` argument (no default), the value is REQUIRED at build (fail-loud if not provided)."""
     return default
+
+
+def load_bytes(filepath):
+    """Read a file as bytes in plain code; obfuscation embeds it in the constant archive.
+
+    The build-time path must be evaluable at module scope; relative paths use the build process's
+    current working directory. Plain execution accepts any path accepted by ``open``.
+    """
+    with open(filepath, "rb") as stream:
+        return stream.read()

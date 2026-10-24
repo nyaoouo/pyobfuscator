@@ -11,6 +11,8 @@ import keyword
 from pathlib import Path
 from typing import Iterable, Mapping
 
+_BUILD_MARKERS = {"local_call", "precompile", "precompile_arg", "load_bytes"}
+
 
 def _module_name(relative: Path) -> str:
     parts = relative.with_suffix("").parts
@@ -78,11 +80,22 @@ def collect_pyinstaller_imports(
         parts = relative.with_suffix("").parts
         package_parts = parts[:-1]
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        called = {node.func.id for node in ast.walk(tree)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        decorated = {dec.id for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     for dec in node.decorator_list if isinstance(dec, ast.Name)}
+        folded_refs = called | decorated
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     add(alias.name)
             elif isinstance(node, ast.ImportFrom):
+                if (node.module == "pyobfuscator" and node.level == 0
+                        and all(alias.name in _BUILD_MARKERS and
+                                (alias.asname or alias.name) in folded_refs
+                                for alias in node.names)):
+                    continue  # these imports are removed from the emitted code
                 if node.level:
                     if node.level > len(package_parts):
                         raise ValueError(f"relative import escapes package in {path}")

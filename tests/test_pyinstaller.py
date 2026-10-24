@@ -61,6 +61,19 @@ def test_generated_hook_collects_static_imports_without_running_them(tmp_path):
     exec(compile(text, str(hook), "exec"), {})  # definition only: no imports or stack frame persist
 
 
+def test_generated_hook_omits_build_marker_only_imports(tmp_path):
+    original = tmp_path / "main.py"
+    _write(original, "from pyobfuscator import load_bytes, precompile\n"
+           "import json\nDATA = load_bytes('asset.bin')\nVALUE = precompile(2)\n")
+    assert collect_pyinstaller_imports(original) == ["json"]
+
+
+def test_generated_hook_keeps_unfolded_marker_import(tmp_path):
+    original = tmp_path / "main.py"
+    _write(original, "from pyobfuscator import load_bytes\nREADER = load_bytes\n")
+    assert collect_pyinstaller_imports(original) == ["pyobfuscator"]
+
+
 def test_import_hook_requires_manifest(tmp_path):
     _write(tmp_path / "main.py", "import json\n")
     with pytest.raises(ValueError, match="requires the obf_project manifest"):
@@ -126,6 +139,26 @@ def test_frozen_text_entry_with_bytecode_body_cohash(tmp_path, mode):
     frozen = _run(_bundle(entry, hook, tmp_path / "build", mode))
     assert frozen.returncode == 0, (frozen.stdout, frozen.stderr)
     assert frozen.stdout.strip().splitlines() == ["STACKSIG 0", "REAL 321"]
+
+
+def test_frozen_load_bytes_needs_no_external_asset(tmp_path):
+    asset = tmp_path / "asset.bin"
+    asset.write_bytes(b"frozen\x00asset")
+    original = tmp_path / "main_original.py"
+    _write(original, "from pyobfuscator import load_bytes\n"
+           f"if __name__ == '__main__':\n    print(load_bytes({str(asset)!r}).hex())\n")
+    entry = tmp_path / "main.py"
+    entry.write_text(obf_module(original.read_text(encoding="utf-8"), ModuleObfOptions(
+        output="text", seed=6, min_blocks=1, pack_body=True, key_from_cff=True,
+        detect_stack=True, key_binds_env=True,
+        handler_src="print('STACKSIG', M.STACK)",
+    )), encoding="utf-8")
+    hook = tmp_path / "pyi_rth.py"
+    assert write_pyinstaller_hook(original, hook) == []
+    asset.unlink()
+    frozen = _run(_bundle(entry, hook, tmp_path / "build", "onedir"))
+    assert frozen.returncode == 0, (frozen.stdout, frozen.stderr)
+    assert frozen.stdout.strip().splitlines() == ["STACKSIG 0", b"frozen\x00asset".hex()]
 
 
 @pytest.mark.parametrize("import_hook", [False, True])

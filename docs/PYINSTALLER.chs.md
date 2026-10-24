@@ -61,6 +61,7 @@ write_pyinstaller_hook("src/myapp", "build/pyi_rth_pyobfuscator.py",
 | `slot_vars`、`stack_calls`、`hide_external_args`、`split_calls` | 预计兼容 | 源码层变换；未单项冻结测试。 |
 | `return_var`、`dedup`、`state_delta`、`dispatch_tree`、`junk_code`、`dict_indirect` | 预计兼容 | 调度器变换；未单项冻结测试。 |
 | `precompile`、`precompile_arg`、`precompile_args`、`precompile_timeout` | 预计兼容 | 发生在构建期；仅打包输出实际仍使用的依赖。 |
+| `load_bytes("路径")` | 冻结实测 | 文件字节被强制放入加密归档；删除资源后构建的 `onedir` 入口仍取回字节，且 `STACKSIG 0`。生成的 hook 不收集纯标记导入。 |
 | `strip_debug`、`on_unsupported`、`seed`、`emit_sourcemap` | 构建期或输出控制 | `strip_debug` 影响 AST/PYC 位置信息，而非所测 TEXT 启动器；不支持语法在打包前由 `on_unsupported` 拒绝；随机种子及源码映射不改变冻结加载。 |
 | `pack_body`、`pack_format="source"` / `"bytecode"`、`key_from_cff` | 组合实测 | 两种模块体格式及派生密钥都在 `onedir`、`onefile` 运行；字节码格式锁定构建时的 Python 版本。 |
 | `integrity_selfcheck`、`builtin_checks`、`builtin_spot_count` | 默认值组合实测 | 默认内置对象检查通过；自定义检查列表未测。 |

@@ -24,12 +24,12 @@ out = obf_module(src, ModuleObfOptions(output="text", seed=1, pack_body=True, ke
 
 ---
 
-## 0. 构建期常量（`precompile` / `precompile_arg`）
+## 0. 构建期常量与文件（`precompile` / `precompile_arg` / `load_bytes`）
 
-`pyobfuscator` 顶层包导出的两个标记函数（`precompile`、`precompile_arg`），可在**构建期**将计算结果
-作为字面常量折叠到混淆产物中。`precompile` 既可作为 `precompile(expr)` 使用，也可作为 `@precompile`
-函数装饰器使用。运行时这些标记均为 no-op——表达式形式返回其值，装饰器形式则调用 thunk——因此未混淆的
-源码仍可正常运行并得到相同的常量。折叠后，标记的导入语句（`from pyobfuscator import …` 或
+`pyobfuscator` 顶层包导出的三个标记函数（`precompile`、`precompile_arg`、`load_bytes`）可在**构建期**
+折叠常量或文件字节。`precompile` 既可作为 `precompile(expr)` 使用，也可作为 `@precompile`
+函数装饰器使用。未混淆时，`precompile` 返回参数或调用 thunk，`precompile_arg` 返回默认值，
+`load_bytes` 则直接读文件。折叠后，纯标记导入语句（`from pyobfuscator import …` 或
 `import pyobfuscator`）会从产物中移除，因此产物不依赖 pyobfuscator。
 
 ```python
@@ -98,13 +98,35 @@ def license_ok(key):
 
 支持嵌套组合：`precompile(_scramble(precompile_arg("KEY")))` 会在子进程 eval 内部解析 `precompile_arg`，外层 `precompile` 再折叠最终结果。
 
+### `load_bytes(filepath)`
+
+未混淆源码调用 `load_bytes(filepath)` 时，函数以二进制模式打开文件并返回字节。混淆时，
+`load_bytes("assets/data.bin")` 在构建期读取文件，将调用替换为从加密常量归档取字节。即使
+`const_archive=False`，这批文件字节仍会入档；该选项仍决定其他合格字面量是否入档。运行时不需要
+原文件。重新构建会重新读取更改后的文件；在 `precompile(...)` 或 `@precompile` 内嵌套使用也不会
+复用旧文件内容。
+
+```python
+from pyobfuscator import load_bytes
+
+def payload():
+    return load_bytes("assets/data.bin")
+```
+
+构建期参数必须是**单个可在模块作用域求值的路径表达式**。字符串字面量会直接读取；计算型路径
+由 `precompile` 使用的隔离构建子进程求值。函数参数在构建期不可用。绝对路径可用；相对路径按
+构建进程的当前工作目录解析，与未混淆运行时的路径规则相同。使用相对路径时，请在相同工作目录构建。文件缺失或不可读会使
+构建失败。`obf_project` 中入口及受保护模块会折叠调用；被原样复制的明文模块仍在运行时读取文件，
+所以仍需携带其文件。内联路径会随调用一起消失；若路径另存于变量，该赋值可能留在产物中，除非
+另一个混淆步骤将它隐藏。
+
 ### `ObfOptions.precompile_args: dict`（默认 `{}`）
 
 构建脚本注入的值，以字符串为键。值必须是字面量可表示的常量（与 `precompile` 结果的要求相同）。通过 `obf_func` / `obf_module` / `obf_project` 原样透传（它是 `ObfOptions` 的基类字段）。
 
 ### `ObfOptions.precompile_timeout: float`（默认 `30.0`）
 
-build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大；超时则构建 fail-loud。build-eval 结果按（模块源码 + 注入参数 + 表达式）在**进程内缓存**，所以同进程内的相同重建（确定性校验、只更新某模块的重建、`obf_project` 重跑）会复用结果而不再起子进程。
+build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大；超时则构建 fail-loud。纯构建期求值结果按（模块源码 + 注入参数 + 表达式）在**进程内缓存**，所以同进程内的相同重建（确定性校验、只更新某模块的重建、`obf_project` 重跑）会复用结果而不再起子进程。涉及 `load_bytes` 时跳过缓存，以免复用旧文件内容。
 
 ### 与加密的组合效果
 
@@ -125,6 +147,7 @@ build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大
 | `precompile` 的参数数量 ≠ 1 | 参数数量错误 |
 | `precompile_arg` 的参数数量 ∉ {1, 2}，或 key 不是字符串字面量 | 验证错误 |
 | `precompile_arg("KEY")`（单参数，必填）但 `"KEY"` 不在 `precompile_args` 中 | 缺少必要的构建参数 |
+| `load_bytes` 参数数量错误、路径在构建期不可求值、文件不可读 | 参数验证、求值或读取错误 |
 | `precompile_args` 中的值不是字面量可表示的常量 | 选项验证错误 |
 | 子进程超时（> `precompile_timeout`） | 超时错误 |
 | `@precompile` 用于嵌套（非模块级）函数 | 验证错误 |
@@ -172,7 +195,7 @@ build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大
 |---|---|---|---|
 | `obf_strings` (`True`) | 通过幂次/RSA 风格的编解码器（`pow(m,e,n)`，辅助函数 `_dec`）将 `str`/`bytes` 字面量编码为运行时解码表达式。 | 输出中不再有明文字符串/字节字面量；有一定的大小与运行时开销。 _实测（§15）：数值代码≈免费，字符串密集代码运行期≈×26（依赖数据类型）。_ | 当 `const_archive` 开启时被其取代。文档字符串**不会**被编码（保持明文 — 参见警告）。 |
 | `obf_ints` (`False`) | 将整数常量编码为基于状态键的表达式（`enc - (state & mask)`，按块独立密钥）。 | 隐藏数值字面量。 _实测（§15）：运行期 +~10%，体积 +~0.6 KB。_ | 因会造成膨胀而默认不开启。跳过 `abs(n) <= 1` 的值。仅适用于急切路径。 |
-| `const_archive` (`False`) | 将**所有** `int`/`float`/`str`/`bytes` 字面量汇聚到一个分层加密的数据包中，并通过 `_get(off,sz,key,cast)` 访问器读取。 | 以一个不透明数据包代替大量内联字面量；取代内联 `obf_strings`/`obf_ints` 编码。 _实测（§15）：数据体积最大（+~10 KB），但字符串解码比 `obf_strings` 便宜（str ×5.7 vs ×26）。_ | 固定数据包较大；访问器增加少量每次读取开销。跳过微小整数（`abs(v) <= 1`）及标记为不归档的节点。 |
+| `const_archive` (`False`) | 将**所有** `int`/`float`/`str`/`bytes` 字面量汇聚到一个分层加密的数据包中，并通过 `_get(off,sz,key,cast)` 访问器读取。 | 以一个不透明数据包代替大量内联字面量；取代内联 `obf_strings`/`obf_ints` 编码。 _实测（§15）：数据体积最大（+~10 KB），但字符串解码比 `obf_strings` 便宜（str ×5.7 vs ×26）。_ | 固定数据包较大；访问器增加少量每次读取开销。跳过微小整数（`abs(v) <= 1`）及标记为不归档的节点。`load_bytes` 结果不受此开关影响，始终入档。 |
 | `hide_compares` (`False`) | 将用户代码中的 `expr == CONST` / `!= CONST`（整数，`|CONST| > 1`）改写为 `_h(expr) <op> <baked>`，其中 `_h` 是双射函数 `splitmix64(zigzag)`，`<baked>` 为构建时计算的 `_h(CONST)`。 | 常量不再以明文出现在比较位置，因此插桩差分分析只能读到 64 位摘要。纯整数运算 ⇒ **可移植**（TEXT + PYC，跨版本）。 _实测（§15）：除非有大量合格比较，否则近乎免费。_ | 仅作为提高门槛的手段：从摘要出发，小常量仍可暴力破解。配合 `body_cohash` 在 PYC 上使用时可完全封闭。不处理调度器自身的 `state == k` 比较（该选项在展平之前运行）。 |
 
 ---

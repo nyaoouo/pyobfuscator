@@ -28,13 +28,13 @@ Two global properties hold for every flag:
 
 ---
 
-## 0. Build-time constants (`precompile` / `precompile_arg`)
+## 0. Build-time constants and files (`precompile` / `precompile_arg` / `load_bytes`)
 
-Two markers (`precompile`, `precompile_arg`), exported from the top-level `pyobfuscator` package, that
+Three markers (`precompile`, `precompile_arg`, `load_bytes`), exported from the top-level `pyobfuscator` package, that
 fold a computed value into the obfuscated output as a literal constant at **build time**. `precompile`
-works both as `precompile(expr)` and as a `@precompile` function decorator. At runtime the markers are
-no-ops — the expression forms return their value and the decorator calls the thunk — so un-obfuscated
-source still runs and yields the same constant. After folding, the marker imports (`from pyobfuscator
+works both as `precompile(expr)` and as a `@precompile` function decorator. In plain source,
+`precompile` returns its value or calls its thunk, `precompile_arg` returns its default, and
+`load_bytes` reads the requested file. After folding, marker-only imports (`from pyobfuscator
 import …` or `import pyobfuscator`) are removed from the output, so it carries no dependency on
 pyobfuscator.
 
@@ -123,6 +123,32 @@ source runs with the dev default.
 Nested composition is supported: `precompile(_scramble(precompile_arg("KEY")))` works — `precompile_arg`
 resolves inside the subprocess eval, and the outer `precompile` folds the result.
 
+### `load_bytes(filepath)`
+
+In plain source, `load_bytes(filepath)` opens the file in binary mode and returns its bytes. During
+obfuscation, `load_bytes("assets/data.bin")` reads the file at build time and replaces the call with an
+access to the encrypted constant archive. It does so even with `const_archive=False`; that setting
+continues to control whether other eligible literals are archived. The source file is not needed at
+runtime. If the file changes, rebuilding reads the new bytes, including when `load_bytes` is nested in
+`precompile(...)` or a `@precompile` thunk.
+
+```python
+from pyobfuscator import load_bytes
+
+def payload():
+    return load_bytes("assets/data.bin")
+```
+
+The build-time argument must be one path expression **evaluable at module scope**. A string literal
+is read directly; a computed path is evaluated in the same isolated build subprocess used by
+`precompile`. A function parameter is not available at build time. An absolute path works; a
+relative path is resolved against the build process's current working directory, as it is in plain
+execution. Build from the same working directory when using relative paths. Missing or unreadable
+files fail the build. In `obf_project`, this applies to the entry and protected modules; plaintext
+copied modules still call `load_bytes` at runtime and therefore still need their files. An inline
+path disappears with the call; a separate path variable may remain in the emitted code unless another
+obfuscation pass hides it.
+
 ### `ObfOptions.precompile_args: dict` (default `{}`)
 
 Build-script-injected values keyed by string. Values must be literal-representable constants (the same
@@ -132,9 +158,10 @@ constraint as `precompile` results). Flows unchanged through `obf_func` / `obf_m
 ### `ObfOptions.precompile_timeout: float` (default `30.0`)
 
 Per-unit timeout (seconds) for the build-eval subprocess. Raise it for slow build-time computations; a
-timeout fails the build loudly. Build-eval results are **cached** per process by (module source +
+timeout fails the build loudly. Pure build-eval results are **cached** per process by (module source +
 injected args + expressions), so identical re-builds (determinism checks, partial-update rebuilds,
-`obf_project` re-runs in one process) reuse the result without re-spawning the subprocess.
+`obf_project` re-runs in one process) reuse the result without re-spawning the subprocess. Evaluation
+involving `load_bytes` bypasses that cache so changed file contents are not reused.
 
 ### Composition with encryption
 
@@ -159,6 +186,7 @@ The build raises `ValueError` for:
 | `precompile` called with arity ≠ 1 | Arity error |
 | `precompile_arg` called with arity ∉ {1, 2}, or with a non-string-literal key | Validation error |
 | `precompile_arg("KEY")` (1-arg, required) with `"KEY"` absent from `precompile_args` | Missing required build arg |
+| `load_bytes` with wrong arity, a path unavailable at build, or an unreadable file | Validation/evaluation/read error |
 | `precompile_args` value is not literal-representable | Options validation error |
 | Subprocess times out (> `precompile_timeout`) | Timeout error |
 | `@precompile` on a nested (non-module-level) function | Validation error |
@@ -207,7 +235,7 @@ dispatcher. These flags shape that dispatcher. All are deterministic and behavio
 |---|---|---|---|
 | `obf_strings` (`True`) | Encode `str`/`bytes` literals as runtime-decoded expressions via a pow/RSA-style codec (`pow(m,e,n)`, helper `_dec`). | No plaintext string/bytes literals in the output; modest size + runtime cost. _Measured (§15): ≈free on numeric code, ≈×26 runtime on string-heavy code (data-dependent)._ | Superseded by `const_archive` when that is on. Docstrings are **not** encoded (they stay plaintext — see warnings). |
 | `obf_ints` (`False`) | Encode integer constants as state-keyed expressions (`enc - (state & mask)`, per-block key). | Hides numeric literals. _Measured (§15): runtime +~10%, size +~0.6 KB._ | Opt-in because it bloats. Skips `abs(n) <= 1`. Eager-path only. |
-| `const_archive` (`False`) | Pool **all** `int`/`float`/`str`/`bytes` literals into one layered-encrypted blob plus a `_get(off,sz,key,cast)` accessor. | One opaque data package instead of many inline literals; supersedes inline `obf_strings`/`obf_ints` encoding. _Measured (§15): largest data footprint (+~10 KB), but decodes strings cheaper than `obf_strings` (str ×5.7 vs ×26)._ | Larger fixed blob; accessor adds a small per-read cost. Skips tiny ints (`abs(v) <= 1`) and nodes marked no-archive. |
+| `const_archive` (`False`) | Pool **all** `int`/`float`/`str`/`bytes` literals into one layered-encrypted blob plus a `_get(off,sz,key,cast)` accessor. | One opaque data package instead of many inline literals; supersedes inline `obf_strings`/`obf_ints` encoding. _Measured (§15): largest data footprint (+~10 KB), but decodes strings cheaper than `obf_strings` (str ×5.7 vs ×26)._ | Larger fixed blob; accessor adds a small per-read cost. Skips tiny ints (`abs(v) <= 1`) and nodes marked no-archive. `load_bytes` results are archived even when this option is off. |
 | `hide_compares` (`False`) | Rewrite user `expr == CONST` / `!= CONST` (integer, `|CONST| > 1`) to `_h(expr) <op> <baked>`, where `_h` is a bijective `splitmix64(zigzag)` and `<baked>` is `_h(CONST)` computed at build. | The constant never appears in plaintext at the comparison site, so an instrumentation differential reads only the 64-bit digest. Pure integer math ⇒ **portable** (TEXT + PYC, cross-version). _Measured (§15): near-free unless the code has many eligible compares._ | Bar-raiser only: small constants remain brute-forceable from the digest. Fully closed when paired with `body_cohash` on PYC. Does not touch the dispatcher's own `state == k` comparisons (it runs before flattening). |
 
 ---

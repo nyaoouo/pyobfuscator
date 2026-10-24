@@ -20,7 +20,7 @@ from .cff.passes.stackcall import StackCallPass
 from .cff.passes.localcall import LocalCallPass
 from .cff.passes.dictindirect import DictIndirectPass
 from .cff.passes.precompile import PrecompilePass
-from .cff.marker import local_call, precompile, precompile_arg
+from .cff.marker import local_call, precompile, precompile_arg, load_bytes
 from .cff.emit import emit
 from .cff.analyze import build_model, analyze_html, build_protect_model, protect_html
 from .cff.module_wrap import wrap_module
@@ -34,7 +34,7 @@ __all__ = [
     "collect_pyinstaller_imports", "write_pyinstaller_hook",
     "ObfOptions", "ModuleObfOptions", "OutputFormat", "UnsupportedPolicy",
     "build_model", "analyze_html", "build_protect_model", "protect_html",
-    "local_call", "precompile", "precompile_arg",
+    "local_call", "precompile", "precompile_arg", "load_bytes",
     "cache_tag", "sourceless_pyc_name", "MIN_SUPPORTED_PYTHON",
 ]
 
