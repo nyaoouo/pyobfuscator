@@ -146,6 +146,18 @@ class _ScopeInfo(NamedTuple):
     direct_funcdefs: list    # FunctionDef/AsyncFunctionDef nodes directly in this scope
 
 
+def _same_scope_bodies(stmt: ast.stmt) -> tuple[list, ...]:
+    """Statement lists inside a block that still bind names in the containing scope."""
+    if isinstance(stmt, (ast.If, ast.For, ast.While)):
+        return stmt.body, stmt.orelse
+    if isinstance(stmt, ast.With):
+        return (stmt.body,)
+    if isinstance(stmt, ast.Try):
+        return (stmt.body, *(handler.body for handler in stmt.handlers),
+                stmt.orelse, stmt.finalbody)
+    return ()
+
+
 def _collect_direct_funcdefs(body: list) -> list:
     """Walk a statement list (WITHOUT descending into nested function/class bodies)
     and collect all FunctionDef/AsyncFunctionDef nodes that appear at ANY block depth
@@ -158,23 +170,10 @@ def _collect_direct_funcdefs(body: list) -> list:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 found.append(stmt)
                 # Do NOT recurse into the function body — it's a nested scope
-            elif isinstance(stmt, ast.ClassDef):
-                # Do NOT recurse — class body is a separate scope, methods excluded by design
-                pass
-            elif isinstance(stmt, ast.If):
-                _visit_stmts(stmt.body)
-                _visit_stmts(stmt.orelse)
-            elif isinstance(stmt, (ast.For, ast.While)):
-                _visit_stmts(stmt.body)
-                _visit_stmts(stmt.orelse)
-            elif isinstance(stmt, ast.With):
-                _visit_stmts(stmt.body)
-            elif isinstance(stmt, ast.Try):
-                _visit_stmts(stmt.body)
-                for h in stmt.handlers:
-                    _visit_stmts(h.body)
-                _visit_stmts(stmt.orelse)
-                _visit_stmts(stmt.finalbody)
+            else:
+                # Class/function bodies are separate scopes; control-flow blocks are not.
+                for nested in _same_scope_bodies(stmt):
+                    _visit_stmts(nested)
 
     _visit_stmts(body)
     return found
@@ -332,10 +331,8 @@ class _DictRewriter(ast.NodeTransformer):
 
         new_body = list(body[:insert_at]) + [self._make_dict_init(dict_var)] + list(body[insert_at:])
 
-        # Now insert registrations after each eligible def; rewrite global binding targets
-        result = []
+        # Rewrite global binding targets in the module's direct statement list.
         for stmt in new_body:
-            # rewrite `g = expr` -> `dict_var[key] = expr` for eligible globals defined in this scope
             if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                     and isinstance(stmt.targets[0], ast.Name)):
                 ginfo = self._global_info.get(stmt.targets[0].id)
@@ -344,6 +341,13 @@ class _DictRewriter(ast.NodeTransformer):
                     stmt.targets[0] = ast.Subscript(
                         value=ast.Name(id=g_dvar, ctx=ast.Load()),
                         slice=ast.Constant(value=g_key), ctx=ast.Store())
+        return self._insert_registrations(new_body, dict_var)
+
+    def _insert_registrations(self, body: list, dict_var: str) -> list:
+        result = []
+        for stmt in body:
+            for nested in _same_scope_bodies(stmt):
+                nested[:] = self._insert_registrations(nested, dict_var)
             result.append(stmt)
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 info = self._func_info.get(stmt.name)

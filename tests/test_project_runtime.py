@@ -1,4 +1,5 @@
 import ast
+import pytest
 
 from pyobfuscator.protect import astutil
 
@@ -124,6 +125,59 @@ def test_project_shared_runtime_runs(tmp_path):
                        capture_output=True, text=True, timeout=90)
     assert r.returncode == 0, r.stderr
     assert "r=cba" in r.stdout, (r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("import_hook", [False, True])
+def test_project_shared_runtime_cohash_integrity(tmp_path, import_hook):
+    import subprocess
+    import sys
+    from pyobfuscator import obf_project, ModuleObfOptions
+
+    src = tmp_path / "src"
+    out = tmp_path / "dist"
+    src.mkdir()
+    (src / "main.py").write_text("import dep\nprint('VALUE:', dep.VALUE)\n", encoding="utf-8")
+    (src / "dep.py").write_text("VALUE = 42\n", encoding="utf-8")
+    with pytest.warns(UserWarning, match="cohash_integrity hashes co_code"):
+        obf_project(root=str(src), out=str(out), entry="main.py", protect=["dep.py"],
+                    import_hook=import_hook,
+                    options=ModuleObfOptions(output="text", pack_format="bytecode", seed=20261024,
+                                             pack_body=True, key_from_cff=True, attest=True,
+                                             pack_decoy=True, cohash_integrity=True))
+    result = subprocess.run([sys.executable, str(out / "main.py")], cwd=out,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "VALUE: 42" in result.stdout
+
+
+def test_project_shared_runtime_cohash_with_dict_indirect(tmp_path):
+    import subprocess
+    import sys
+    from pyobfuscator import obf_project, ModuleObfOptions
+
+    src = tmp_path / "src"
+    out = tmp_path / "dist"
+    src.mkdir()
+    (src / "main.py").write_text("import dep\nprint('VALUE:', dep.value())\n", encoding="utf-8")
+    (src / "dep.py").write_text(
+        "def value():\n"
+        "    try:\n"
+        "        def _inner():\n"
+        "            return 42\n"
+        "        return _inner()\n"
+        "    except KeyError:\n"
+        "        return -1\n", encoding="utf-8")
+    with pytest.warns(UserWarning, match="cohash_integrity hashes co_code"):
+        obf_project(root=str(src), out=str(out), entry="main.py", protect=["dep.py"],
+                    import_hook=True,
+                    options=ModuleObfOptions(output="text", pack_format="bytecode", seed=20261024,
+                                             pack_body=True, key_from_cff=True, attest=True,
+                                             pack_decoy=True, cohash_integrity=True,
+                                             dict_indirect=True))
+    result = subprocess.run([sys.executable, str(out / "main.py")], cwd=out,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "VALUE: 42" in result.stdout
 
 
 def test_foreign_import_fails_loud(tmp_path):

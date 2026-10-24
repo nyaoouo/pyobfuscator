@@ -799,9 +799,11 @@ def _build_oracle_install_stmts(oracle_name_str: str, oracle_var: str,
 # ============================================================================================
 
 def project_s_correct(options) -> int:
-    """Reproduce `_assemble_launcher`'s `s_correct` from `options` alone (seed + builtin-check
-    options). Identical draw order to `_assemble_launcher`, so the entry's internal `s_correct`, the
-    oracle, and every satellite's baked key/CORR agree without the entry build running first."""
+    """Reproduce `_assemble_launcher`'s `s_correct` from options alone.
+
+    The entry and satellites must use the same selector even when the entry folds its guard's
+    co_code hash into it. The guard's co_code does not depend on its generated function name.
+    """
     rng = random.Random((options.seed or 0) ^ 0x5EED2A)
     steps = [((rng.randrange(3, 1 << 32) | 1), rng.randrange(0, 1 << 48)) for _ in range(6)]
     seed0 = rng.randrange(0, 1 << 48)
@@ -809,7 +811,11 @@ def project_s_correct(options) -> int:
     fold_bi = bool(options.integrity_selfcheck or options.pack_decoy)
     if fold_bi:
         _checks, _spot, _bi_clean = _choose_bi(options)
-        return (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK
+        s_path = (s_path ^ (_bi_clean * _BI_MAGIC)) & _MASK
+    if options.cohash_integrity:
+        guard_name = "_project_guard"
+        guard_def = emit_def("t_guard", t_guard=guard_name)
+        s_path = (s_path ^ _guard_cohash(guard_def, guard_name)) & _MASK
     return s_path
 
 

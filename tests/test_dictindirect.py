@@ -1,7 +1,8 @@
-import sys, os, io, contextlib, ast, itertools
+import sys, os, io, contextlib, ast, itertools, textwrap
 sys.path.insert(0, os.path.dirname(__file__))
 import pytest
 from pyobfuscator import obf_func, obf_module, ObfOptions, ModuleObfOptions
+from pyobfuscator.cff.passes.dictindirect import DictIndirectPass
 
 
 def _ns(code, name):
@@ -72,3 +73,42 @@ def test_module_private_funcs_indirected_public_preserved():
     o = {}; exec(compile(src, "<o>", "exec"), o)
     t = {}; exec(compile(out, "<t>", "exec"), t)
     assert t["api"](7) == o["api"](7)
+
+
+def test_nested_function_in_try_is_registered_where_defined():
+    src = ("def f():\n"
+           "    try:\n"
+           "        def _inner():\n"
+           "            return 'ok'\n"
+           "        return _inner()\n"
+           "    except KeyError:\n"
+           "        return 'missing registration'\n"
+           "result = f()\n")
+    tree = DictIndirectPass().transform(ast.parse(src), ModuleObfOptions(dict_indirect=True))
+    outer = tree.body[0]
+    try_body = outer.body[1].body
+    assert isinstance(try_body[1], ast.Assign)
+    assert isinstance(try_body[1].targets[0], ast.Subscript)
+    ns = {}
+    exec(compile(tree, "<dictindirect>", "exec"), ns)
+    assert ns["result"] == "ok"
+
+    out = obf_module(src, ModuleObfOptions(output="text", seed=20261024,
+                                           min_blocks=1, dict_indirect=True))
+    protected = {}
+    exec(compile(out, "<obfuscated>", "exec"), protected)
+    assert protected["result"] == "ok"
+
+
+@pytest.mark.parametrize("block", [
+    "try:\n    def _inner(): return 'ok'\nexcept ValueError:\n    pass\n",
+    "try:\n    raise ValueError\nexcept ValueError:\n    def _inner(): return 'ok'\n",
+    "try:\n    pass\nexcept ValueError:\n    pass\nelse:\n    def _inner(): return 'ok'\n",
+    "try:\n    pass\nfinally:\n    def _inner(): return 'ok'\n",
+])
+def test_nested_function_registered_in_each_try_clause(block):
+    src = "def f():\n" + textwrap.indent(block, "    ") + "    return _inner()\nresult = f()\n"
+    tree = DictIndirectPass().transform(ast.parse(src), ModuleObfOptions(dict_indirect=True))
+    ns = {}
+    exec(compile(tree, "<dictindirect>", "exec"), ns)
+    assert ns["result"] == "ok"
