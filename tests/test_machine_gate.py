@@ -107,7 +107,9 @@ def test_machine_gate_needs_secret_handoff_and_project_boundary(tmp_path):
         obf_module("print('secret')", opts)
 
 
-def test_project_gate_centralizes_protected_satellites(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cohash_integrity", [False, True])
+def test_project_gate_centralizes_protected_satellites(tmp_path, monkeypatch,
+                                                       cohash_integrity):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     enc = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     sign = ed25519.Ed25519PrivateKey.generate()
@@ -128,7 +130,8 @@ def test_project_gate_centralizes_protected_satellites(tmp_path, monkeypatch):
         device_policy="software_allowed", mode="offline",
         offline_nonce=b"fixed-project-license-id")
     opts = ModuleObfOptions(output="text", pack_body=True, key_from_cff=True,
-                            attest=True, seed=12345, machine_gate=gate)
+                            attest=True, seed=12345, machine_gate=gate,
+                            cohash_integrity=cohash_integrity)
     records = {}
     with pytest.raises(ValueError, match="import_hook"):
         obf_project(root=str(root), out=str(out), entry="main.py", protect=["secret.py"],
