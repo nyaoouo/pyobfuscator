@@ -245,8 +245,8 @@ The packer wraps the obfuscated body in an encrypted blob carried by a launcher 
 | Option (default) | Effect | Impact | Limitations |
 |---|---|---|---|
 | `integrity_selfcheck` (`False`) | Fold builtin-identity checks (`type(sum/open/len/…) is builtin_type`) into the key selector. | A monkeypatched builtin ⇒ wrong key ⇒ decoy. _Measured (§15): negligible._ | See `builtin_checks`/`builtin_spot_count` for what is checked. |
-| `cohash_integrity` (`False`) | Fold a runtime hash of a non-flattened guard function's `co_code` into the selector. | Patching the guard's bytecode ⇒ wrong key ⇒ decoy. _Measured (§15): size +~2 KB, negligible runtime._ | **Version-locking on TEXT** (hashes version-specific bytecode) — a genuine run on a different Python version decodes the decoy. Warns on TEXT; use PYC (already version-locked) for portability. |
-| `body_cohash` (`False`) | The body self-verifies: each oracle-gated transition folds `H = hash(guard.__code__.co_code)` recomputed at runtime; the build bakes `H_build` into the correction so the genuine path cancels and any body recompile/instrumentation flips `H` → decoy. | Extends integrity from the launcher to the body. _Measured (§15): near-zero on top of `attest` (+~0.3 KB)._ | **Requires `attest=True` and `output="pyc"`** (fail-loud `ValueError` otherwise) — a TEXT body is recompiled by the end user, so its `co_code` would not match the baked hash. |
+| `cohash_integrity` (`False`) | Fold a runtime hash of a non-flattened guard function's `co_code` into the selector. | Patching the guard's bytecode ⇒ wrong key ⇒ decoy. _Measured (§15): size +~2 KB, negligible runtime._ | **Version-locking on TEXT** (hashes version-specific bytecode) — a genuine run on a different Python version decodes the decoy. Warns on TEXT; rebuild for each Python version or disable it for cross-version use. |
+| `body_cohash` (`False`) | The body self-verifies: each oracle-gated transition folds `H = hash(guard.__code__.co_code)` recomputed at runtime; the build bakes `H_build` into the correction so the genuine path cancels and any body recompile/instrumentation flips `H` → decoy. | Extends integrity from the launcher to the body. _Measured (§15): near-zero on top of `attest` (+~0.3 KB)._ | **Requires `attest=True` and stable body bytecode:** `output="pyc"`, or `output="text", pack_format="bytecode"`. Source-format TEXT bodies are rejected. The TEXT bytecode mode warns because it locks to the build Python version. |
 | `pack_decoy` (`False`) | On tamper/wrong-path, branchlessly decrypt and run a **decoy** body instead of failing. Real and decoy share one ciphertext; selection is a `dict.get` + arithmetic with no patchable boolean. The real key is stored only as `K_real ^ S_correct`. | Detection becomes a honeypot: the attacker reaches a believable decoy. _Measured (§15): +~0.6 KB build cost (the decoy is obfuscated too); negligible runtime._ | Uses `decoy_src` if provided, else a built-in sentinel decoy. The embedded decoy is obfuscated through the same pipeline (see `decoy_obf_overrides`). |
 
 ---
@@ -421,7 +421,7 @@ path):
 | `attest=True` | `pack_body=True` **and** `key_from_cff=True` | `ValueError` |
 | `attest=True` | `output` in `{"text", "pyc"}` | `ValueError` |
 | `body_cohash=True` | `attest=True` | `ValueError` |
-| `body_cohash=True` | `output="pyc"` | `ValueError` |
+| `body_cohash=True` | `output="pyc"` or `output="text", pack_format="bytecode"` | `ValueError` |
 | `attest_runtime_bind=True` | `attest=True` | (no effect without it) |
 | `name_vault_attrs=True` | `name_vault=True` | (no effect without it) |
 | `import_hook=True` (in `obf_project`) | shared-runtime mode (`attest` + `pack_body` + `key_from_cff` + text/pyc + ≥1 protected file) | `ValueError` |
@@ -429,6 +429,7 @@ path):
 Warnings (not errors):
 
 - `cohash_integrity=True` with `output="text"` — version-locks the TEXT launcher (warns).
+- `body_cohash=True` with `output="text", pack_format="bytecode"` — version-locks the packed body (warns).
 - `require_min_python=True` with `output` `"pyc"`/`"ast"` — ignored (warns).
 - Any plaintext docstring that will survive into the output — warns so you can remove sensitive ones.
 
@@ -440,6 +441,7 @@ Warnings (not errors):
 |---|---|---|
 | Cross-version source distribution | `output="text"` + portable flags (`hide_compares`, `attest`, `pack_decoy`, detection) | `cohash_integrity`, `body_cohash` (they version-lock) |
 | Version-locked compact binary | `output="pyc"` + `body_cohash` + `cohash_integrity` | — (a `.pyc` is already magic-locked) |
+| PyInstaller with a precompiled protected body | `output="text", pack_format="bytecode", attest=True, body_cohash=True` | A sourceless `.pyc` as the PyInstaller entry; rebuild for each Python version |
 | Importable / runnable single file | `output="pyc"` named `<module>.pyc` (see `sourceless_pyc_name`) | `detect_stack` if you need `import <module>` to work (it serves the decoy on import by design) |
 
 ---

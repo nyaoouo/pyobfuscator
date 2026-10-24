@@ -292,7 +292,7 @@ def _patch_attest_markers(tree: ast.Module, requests: list, s_correct: int,
         NOTE: NO & MASK — Python ints are unbounded, masking a negative delta would give
         a huge positive (2^64 + delta), making state != T for T < s.
 
-    `h_build` (body self-cohash, PYC-only) is the build-side FNV of the body guard's co_code; it
+    `h_build` (body self-cohash for a precompiled body) is the build-side FNV of the guard's co_code; it
     is 0 unless body_cohash is active. When non-zero, the body's gates emit a matching `^ H` runtime
     term (H = the same hash recomputed at runtime); on the genuine path H == h_build so the two cancel
     and the path is unchanged, while any co_code tamper (instrumentation/recompile) flips H -> wrong
@@ -492,7 +492,7 @@ def _assemble_launcher(tree: ast.AST, options: ObfOptions, *, sourcemap_out: dic
         seed_base = options.seed or 0
         magic_val = _attest_MAGIC(seed_base)
         oracle_name_str = _attest_oracle_name(seed_base)
-        # Fold the body guard's co_code hash into every correction (PYC-only). cff emits the
+        # Fold the body guard's co_code hash into every correction. cff emits the
         # matching `^ H` runtime term iff body_cohash is on, so both sides are keyed on the same flag.
         h_build = 0
         if getattr(options, "body_cohash", False):

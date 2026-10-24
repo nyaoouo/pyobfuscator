@@ -74,15 +74,14 @@ def dec_name(seed: int) -> str:
     return f"__pyobf_dec_{rng.randrange(0, 1 << 32):08x}__"
 
 
-# ---- Body self-cohash (PYC-only) ----------------------------------------------------------------
+# ---- Body self-cohash (precompiled body) --------------------------------------------------------
 # The body computes H = FNV-1a(guard.__code__.co_code) at each gated unit and folds it into the
 # oracle-gated transition (`state = O(state) ^ H ^ corr`). protect bakes the correction so the
 # genuine path (H == H_build) cancels exactly; ANY tampering that recompiles the body (an AST-
 # instrumentation differential, bytecode rewriting) changes the guard's co_code -> H != H_build ->
 # wrong state -> divergence/decoy. This extends integrity to the BODY itself (the launcher's
-# cohash_integrity only protects the launcher). PYC-ONLY: the .pyc embeds the build-compiled
-# co_code, so runtime co_code == build co_code exactly; a TEXT body is recompiled by the end user's
-# (possibly different-version) interpreter, so its co_code would not match H_build.
+# cohash_integrity only protects the launcher). PYC and TEXT with pack_format="bytecode" embed
+# build-compiled co_code. A source-format TEXT body is recompiled by the runtime interpreter.
 #
 # Build/runtime hash agreement: cohash_build_hash(seed) compiles the SAME seeded guard def as cff
 # emits, so the hashed co_code is byte-identical by construction. (co_code is independent of the

@@ -1,5 +1,7 @@
 # pyobfuscator
 
+PyInstaller 打包及逐项支持程度：[`docs/PYINSTALLER.chs.md`](docs/PYINSTALLER.chs.md)。
+
 一个**源码级 Python 控制流扁平化混淆器**，并附带一套可选的、分层的
 **Python 层软件保护栈**（压缩+加密壳 → 控制流派生密钥 → 分支无关诱饵 → 反 trace 蜜罐 → 混淆 import → cff↔python 运行期互证）。
 

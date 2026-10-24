@@ -86,7 +86,7 @@ class ObfOptions:
     key_from_cff: bool = False  # derive packer key from launcher control-flow fold; else temp key
     integrity_selfcheck: bool = False  # fold builtin-identity into the selector (anti-monkeypatch)
     cohash_integrity: bool = False     # fold a hash of a non-flattened guard fn's co_code into the selector
-    body_cohash: bool = False          # PYC-ONLY: the BODY self-verifies — each oracle-gated transition folds H=FNV(guard.__code__.co_code) recomputed at runtime; protect bakes H_build into the correction so the genuine path cancels and ANY body tamper that recompiles co_code (an AST-instrumentation differential / bytecode rewrite) flips H -> wrong state -> decoy. Extends integrity to the body (cohash_integrity only guards the launcher). Requires attest=True; rejected for TEXT (a TEXT body is recompiled by the end user's interpreter, so co_code would not match H_build — that is exactly what TEXT portability needs, hence PYC-only)
+    body_cohash: bool = False          # The BODY self-verifies: oracle-gated transitions fold H=FNV(guard.__code__.co_code). Requires attest and stable packed bytecode: output="pyc", or output="text" with pack_format="bytecode". Source-format TEXT bodies are recompiled at runtime and cannot preserve H_build across Python versions.
     pack_decoy: bool = False           # tamper/wrong-path -> branchlessly decrypt+run a DECOY body
     key_binds_env: bool = False        # let detection signals into the selector (default off = no FP)
     detect_trace: bool = False  # fold sys.gettrace()/getprofile() activity into the detection aggregate D

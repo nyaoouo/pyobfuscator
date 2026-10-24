@@ -6,6 +6,7 @@ import sys
 import warnings
 
 from .options import ObfOptions, ModuleObfOptions, OutputFormat, UnsupportedPolicy
+from .pyinstaller import collect_pyinstaller_imports, write_pyinstaller_hook
 from .cff.passes.base import Pipeline
 from .cff.passes.flatten import FlattenPass
 from .cff.passes.dataobf import DataObfPass
@@ -30,6 +31,7 @@ __version__ = "0.0.0"
 
 __all__ = [
     "obf_func", "obf_module", "obf_project",
+    "collect_pyinstaller_imports", "write_pyinstaller_hook",
     "ObfOptions", "ModuleObfOptions", "OutputFormat", "UnsupportedPolicy",
     "build_model", "analyze_html", "build_protect_model", "protect_html",
     "local_call", "precompile", "precompile_arg",
@@ -136,13 +138,19 @@ def _warn_version_lock(options) -> None:
     TEXT — whose purpose is cross-version PORTABILITY — it LOCKS the launcher to the build Python
     version: a genuine run under a different version produces different co_code -> hash mismatch ->
     wrong key -> DECOY. Warn so the caller can pick portability (drop cohash) vs version-locked strength.
-    (body_cohash adds the same lock.)"""
+    (body_cohash with a bytecode body adds the same lock.)"""
     if options.output is OutputFormat.TEXT and getattr(options, "cohash_integrity", False):
         warnings.warn(
             "pyobfuscator: cohash_integrity hashes co_code (version-specific bytecode), so a TEXT "
             "launcher is LOCKED to the build Python %d.%d — a genuine run on a DIFFERENT version will "
             "decode the DECOY, defeating TEXT's cross-version portability. Use PYC (already version-"
             "locked), or disable cohash_integrity for portable TEXT." % sys.version_info[:2],
+            UserWarning, stacklevel=3)
+    if (options.output is OutputFormat.TEXT and getattr(options, "body_cohash", False)
+            and options.pack_format == "bytecode"):
+        warnings.warn(
+            "pyobfuscator: body_cohash with pack_format='bytecode' locks this TEXT artifact to "
+            "the build Python %d.%d; rebuild for a different interpreter version." % sys.version_info[:2],
             UserWarning, stacklevel=3)
 
 
@@ -220,20 +228,18 @@ def obf_module(src, options: ModuleObfOptions | None = None, *, sourcemap_out: d
                 "those outputs. With output='ast' the body keeps unpatched __pyobf_corr_* "
                 "placeholders and raises NameError at runtime.")
     if getattr(options, "body_cohash", False):
-        # body_cohash rides the attest gates (it folds H into the oracle transition) and is PYC-only
-        # (a TEXT body is recompiled by the end user's interpreter -> its co_code would not match the
-        # baked H_build -> the genuine path would decode the decoy). Reject the broken combos up front
-        # rather than shipping a launcher that fails even on the honest path.
+        # body_cohash needs stable bytecode. A TEXT launcher is valid when its packed body is
+        # precompiled bytecode; a source body is recompiled at runtime and may change co_code.
         if not getattr(options, "attest", False):
             raise ValueError(
                 "body_cohash=True requires attest=True — the body self-hash is folded into the "
                 "oracle-gated state transitions, so without attestation there are no gates to carry it.")
-        if options.output is not OutputFormat.PYC:
+        if not (options.output is OutputFormat.PYC or
+                (options.output is OutputFormat.TEXT and options.pack_format == "bytecode")):
             raise ValueError(
-                "body_cohash=True requires output='pyc' — it hashes the body's compiled co_code, which "
-                "is version-locked. A TEXT body is recompiled by the end user's (possibly different) "
-                "interpreter, so its co_code would not match the baked hash and the genuine path would "
-                "decode the DECOY. Use PYC (already version-locked), or disable body_cohash for TEXT.")
+                "body_cohash=True requires output='pyc' or output='text' with "
+                "pack_format='bytecode' — it hashes the body's compiled co_code. A source body "
+                "can be recompiled by another interpreter and would decode the DECOY.")
     tree = _to_tree(src)
     _warn_docstrings(tree, options)
     _warn_version_lock(options)

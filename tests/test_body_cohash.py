@@ -1,4 +1,4 @@
-"""#4 body self-cohash (PYC-only): each oracle-gated transition folds H = FNV(guard.__code__.co_code),
+"""#4 body self-cohash (precompiled body): each oracle-gated transition folds H = FNV(guard.__code__.co_code),
 recomputed at runtime; protect bakes H_build into the correction so the GENUINE path cancels (H ==
 H_build) and any tamper that changes the body's co_code (instrumentation / recompile / bytecode
 rewrite) flips H -> wrong state -> divergence. This extends integrity to the BODY (cohash_integrity
@@ -78,12 +78,23 @@ def test_body_cohash_funcs_only_module(seed):
     assert ns["f"](5) == 10 and ns["f"](-3) == 3
 
 
-# ---- validation (fail-loud): PYC-only + requires attest ----
+# ---- validation (fail-loud): stable bytecode + requires attest ----
 
-def test_body_cohash_text_rejected():
+@pytest.mark.parametrize("pack_format", ["auto", "source"])
+def test_body_cohash_text_rejected(pack_format):
     opts = dict(pack_body=True, key_from_cff=True, min_blocks=1, attest=True, body_cohash=True)
     with pytest.raises(ValueError, match="body_cohash.*requires output='pyc'"):
-        obf_module(_SRC, ModuleObfOptions(seed=1, output="text", **opts))
+        obf_module(_SRC, ModuleObfOptions(seed=1, output="text",
+                                          pack_format=pack_format, **opts))
+
+
+def test_body_cohash_text_bytecode_genuine_equivalent():
+    opts = dict(_PYC_COHASH, output="text", pack_format="bytecode")
+    with pytest.warns(UserWarning, match="body_cohash.*locks this TEXT artifact"):
+        launcher = obf_module(_SRC, ModuleObfOptions(seed=42, **opts))
+    ns = {"__name__": "m"}
+    exec(compile(launcher, "<obfuscated>", "exec"), ns)
+    assert {key: ns[key] for key in _REF} == _REF
 
 
 def test_body_cohash_without_attest_rejected():

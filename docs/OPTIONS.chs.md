@@ -209,8 +209,8 @@ build-eval 子进程的单元级超时（秒）。构建期计算较慢时调大
 | Option (default) | Effect | Impact | Limitations |
 |---|---|---|---|
 | `integrity_selfcheck` (`False`) | 将内置函数身份检查（`type(sum/open/len/…) is builtin_type`）折叠到密钥选择器中。 | 内置函数被猴子补丁替换 ⇒ 密钥错误 ⇒ 诱饵。 _实测（§15）：可忽略。_ | 检查范围见 `builtin_checks`/`builtin_spot_count`。 |
-| `cohash_integrity` (`False`) | 将某个未展平守卫函数的 `co_code` 的运行时哈希折叠到选择器中。 | 修补守卫的字节码 ⇒ 密钥错误 ⇒ 诱饵。 _实测（§15）：体积 +~2 KB，运行期可忽略。_ | **TEXT 上会锁定版本**（哈希与版本相关的字节码）—— 在不同 Python 版本上正常运行时会解码出诱饵。对 TEXT 发出警告；如需可移植性请使用 PYC（已通过魔数锁定版本）。 |
-| `body_cohash` (`False`) | 函数体自我验证：每个 oracle 门控的转移在运行时重新折叠 `H = hash(guard.__code__.co_code)`；构建时将 `H_build` 烘焙到修正值中，使得正常路径相互抵消，而任何函数体重新编译/插桩都会翻转 `H` → 诱饵。 | 将完整性验证从启动器扩展到函数体。 _实测（§15）：在 `attest` 之上近乎零成本（+~0.3 KB）。_ | **需要 `attest=True` 且 `output="pyc"`**（否则显式报错 `ValueError`）—— TEXT 函数体会被最终用户重新编译，其 `co_code` 将与烘焙的哈希不匹配。 |
+| `cohash_integrity` (`False`) | 将某个未展平守卫函数的 `co_code` 的运行时哈希折叠到选择器中。 | 修补守卫的字节码 ⇒ 密钥错误 ⇒ 诱饵。 _实测（§15）：体积 +~2 KB，运行期可忽略。_ | **TEXT 上会锁定版本**（哈希与版本相关的字节码）—— 在不同 Python 版本上正常运行时会解码出诱饵。对 TEXT 发出警告；跨版本使用请关闭此项，否则每个 Python 版本分别构建。 |
+| `body_cohash` (`False`) | 函数体自我验证：每个 oracle 门控的转移在运行时重新折叠 `H = hash(guard.__code__.co_code)`；构建时将 `H_build` 烘焙到修正值中，使得正常路径相互抵消，而任何函数体重新编译/插桩都会翻转 `H` → 诱饵。 | 将完整性验证从启动器扩展到函数体。 _实测（§15）：在 `attest` 之上近乎零成本（+~0.3 KB）。_ | **需要 `attest=True` 及稳定的模块体字节码**：`output="pyc"`，或 `output="text", pack_format="bytecode"`。源码型 TEXT 模块体会被拒绝；TEXT 字节码模式因锁定构建时的 Python 版本而发出警告。 |
 | `pack_decoy` (`False`) | 在被篡改/走错路径时，无分支地解密并运行一个**诱饵**函数体，而非直接失败。真实体与诱饵共享一个密文；选择通过 `dict.get` 加算术实现，不存在可修补的布尔值。真实密钥仅以 `K_real ^ S_correct` 的形式存储。 | 检测变为蜜罐：攻击者到达一个可信的诱饵。 _实测（§15）：构建 +~0.6 KB（诱饵也会被混淆）；运行期可忽略。_ | 若提供了 `decoy_src` 则使用该源码，否则使用内置哨兵诱饵。嵌入的诱饵经过同一流水线混淆（参见 `decoy_obf_overrides`）。 |
 
 ---
@@ -360,7 +360,7 @@ API 会预先拒绝以下组合（而非生成一个在正常路径上就会崩�
 | `attest=True` | `pack_body=True` **且** `key_from_cff=True` | `ValueError` |
 | `attest=True` | `output` 属于 `{"text", "pyc"}` | `ValueError` |
 | `body_cohash=True` | `attest=True` | `ValueError` |
-| `body_cohash=True` | `output="pyc"` | `ValueError` |
+| `body_cohash=True` | `output="pyc"` 或 `output="text", pack_format="bytecode"` | `ValueError` |
 | `attest_runtime_bind=True` | `attest=True` | （不开启则无效果） |
 | `name_vault_attrs=True` | `name_vault=True` | （不开启则无效果） |
 | `import_hook=True`（在 `obf_project` 中） | 共享运行时模式（`attest` + `pack_body` + `key_from_cff` + text/pyc + ≥1 个受保护文件） | `ValueError` |
@@ -368,6 +368,7 @@ API 会预先拒绝以下组合（而非生成一个在正常路径上就会崩�
 警告（非错误）：
 
 - `cohash_integrity=True` 且 `output="text"` —— 锁定 TEXT 启动器的版本（发出警告）。
+- `body_cohash=True` 且 `output="text", pack_format="bytecode"` —— 锁定加密模块体的版本（发出警告）。
 - `require_min_python=True` 且 `output` 为 `"pyc"`/`"ast"` —— 被忽略（发出警告）。
 - 任何将保留在输出中的明文文档字符串 —— 发出警告，以便移除敏感内容。
 
@@ -379,6 +380,7 @@ API 会预先拒绝以下组合（而非生成一个在正常路径上就会崩�
 |---|---|---|
 | 跨版本源码发行 | `output="text"` + 可移植标志（`hide_compares`、`attest`、`pack_decoy`、检测类选项） | `cohash_integrity`、`body_cohash`（会锁定版本） |
 | 版本锁定紧凑二进制 | `output="pyc"` + `body_cohash` + `cohash_integrity` | —（`.pyc` 已通过魔数锁定） |
+| PyInstaller 携带预编译加密模块体 | `output="text", pack_format="bytecode", attest=True, body_cohash=True` | 无源码 `.pyc` 直接作为 PyInstaller 入口；每个 Python 版本分别构建 |
 | 可导入/可直接运行的单文件 | `output="pyc"` 命名为 `<module>.pyc`（参见 `sourceless_pyc_name`） | 若需要 `import <module>` 正常工作则避免 `detect_stack`（该选项设计上会在 import 时返回诱饵） |
 
 ---

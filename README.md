@@ -1,5 +1,7 @@
 # pyobfuscator
 
+PyInstaller distribution: [`docs/PYINSTALLER.md`](docs/PYINSTALLER.md).
+
 A source-level **Python control-flow-flattening obfuscator** with an optional, layered
 **Python-layer software-protection stack** (compressing + encrypting packer → control-flow-derived key
 → branchless decoy → anti-trace honeypot → obfuscated imports → cff↔python runtime attestation).
