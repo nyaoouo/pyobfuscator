@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "domain": "outer-bootstrap",
+  "markers": {
+    "pyobf.native.bootstrap": {"recipe": "baseline"},
+    "pyobf.native.bootstrap.eh": {"recipe": "baseline", "coverage": "hybrid-eh"}
+  },
+  "functions": {
+    "_ZN12pyobfuscator6native4demo18initialize_sessionERNS1_14RuntimeSessionEPFvjPvES4_": {
+      "components": {"path-fold": "required"}
+    },
+    "_ZN12pyobfuscator6native4demo21pass_environment_gateEPNS1_14RuntimeContextE": {
+      "components": {"path-fold": "required"}
+    },
+    "_ZN12pyobfuscator6native4demo18dispatch_lifecycleERKNS0_23BootstrapContextRequestEPv": {
+      "components": {"path-fold": "required"}
+    },
+    "_ZN12pyobfuscator6native4demo24release_and_load_payloadEbRNS1_14RuntimeSessionE": {
+      "components": {"path-fold": "required"}
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "markers": {
+    "pyobf.native.cff": {
+      "recipe": "baseline",
+      "components": {
+        "constant-archive": "optional"
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# Copy this file to backends/<name>/Backend.cmake and replace <name> and source paths.
+# The SDK source is required. The encrypted demo sources are optional.
+set(PYOBF_NATIVE_BACKEND_ID <name>)
+set(PYOBF_NATIVE_BACKEND_CAN_ENCRYPTED_DEMO FALSE)
+set(PYOBF_NATIVE_BACKEND_CAN_ARCHIVE FALSE)
+set(PYOBF_NATIVE_BACKEND_CAN_CONTEXT FALSE)
+set(PYOBF_NATIVE_BACKEND_CAN_SHA256 FALSE)
+set(PYOBF_NATIVE_BACKEND_CAN_CODE_CAPTURE FALSE)
+set(PYOBF_NATIVE_BACKEND_CAPTURE_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_SHA256_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_CONTEXT_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_ARCHIVE_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_SDK_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/sdk_environment.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/operations/atomic.cpp")
+set(PYOBF_NATIVE_BACKEND_SYSTEM_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_ENVIRONMENT_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_TEST_ENVIRONMENT_SOURCES "")
+set(PYOBF_NATIVE_BACKEND_DETECTORS "")
+set(PYOBF_NATIVE_BACKEND_LINK_LIBRARIES "")
+
+# To enable the encrypted demo, implement the semantic operations in
+# include/pyobfuscator_native/system_ops.hpp, implement a backend detector catalog,
+# list their sources above, then set CAN_ENCRYPTED_DEMO to TRUE.
+# Release key expansion additionally uses SHA256 with a 32-byte caller-owned output;
+# reject unavailable/failed hashing explicitly and erase output on failure.
+# SDK publication requires atomic_compare_exchange32, atomic_store32 and spin_pause.
+# Supply these behind the semantic macros even for an SDK-only target.
+# Archive support additionally needs explicit-AAD AEAD, 32-bit atomic publication, pause,
+# target byte order and terminal failure operations; list those sources and set CAN_ARCHIVE.
+# Owned contexts additionally need balanced code-address provider references, memory,
+# atomic publication/pause and terminal failure; list those sources and set CAN_CONTEXT.
+# A contribution provider additionally needs SHA-256 sources and CAN_SHA256. Its consumer
+# uses only the owned context protocol and does not compile the private provider helper.
+# Private code capture additionally implements src/measurement/backend.hpp through semantic
+# macros: current-process module leases, bounded RX image reads and monotonic clock samples.
+# Set CAN_CODE_CAPTURE only with the admitted PE AMD64 contract; it is not a public SDK ABI.

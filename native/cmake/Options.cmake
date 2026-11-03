@@ -1,0 +1,5 @@
+option(PYOBF_NATIVE_BUILD_SMOKE "Build the SDK wiring smoke test" ${PROJECT_IS_TOP_LEVEL})
+option(PYOBF_NATIVE_BUILD_LLVM_PASS "Build the LLVM CFF pass plugin" OFF)
+option(PYOBF_NATIVE_BUILD_DEMO "Build the encrypted native bootstrap demonstration" OFF)
+option(PYOBF_NATIVE_BUILD_ARCHIVE_RUNTIME "Build source-only typed archive runtime support" OFF)
+option(PYOBF_NATIVE_BUILD_CONTEXT_RUNTIME "Enable standalone owned-context sources (also required by the demo)" OFF)

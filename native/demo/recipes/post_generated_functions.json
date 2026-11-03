@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "parent": {
+    "kind": 3,
+    "selector": {
+      "symbol": "_ZN12pyobfuscator6native4demo18initialize_sessionERNS1_14RuntimeSessionEPFvjPvES4_",
+      "aliases": [],
+      "fragments": [],
+      "generated_helpers": true
+    }
+  },
+  "child": {
+    "kind": 3,
+    "selector": {
+      "symbol": "pyobf_demo_bound_compute",
+      "aliases": [],
+      "fragments": [],
+      "generated_helpers": true
+    }
+  }
+}

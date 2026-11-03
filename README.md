@@ -2,6 +2,128 @@
 
 PyInstaller distribution: [`docs/PYINSTALLER.md`](docs/PYINSTALLER.md).
 Machine-gated entrypoints: [`docs/MACHINE.md`](docs/MACHINE.md).
+Native CFF/bootstrap prototype, backend registry, and extension guide:
+[`docs/NATIVE.md`](docs/NATIVE.md), [`native/README.md`](native/README.md).
+The [ordinary native payload binding](docs/NATIVE_PAYLOAD_BINDING.md) guide covers strict
+source gates, early/late packaging dependencies and the explicit weaker profile.
+The [canonical code subject tooling](docs/NATIVE_CODE_SUBJECTS.md) defines host PE references
+and actual mapped-byte tests. The [private native capture](docs/NATIVE_CODE_CAPTURE.md) adds
+Windows x64 CNG acquisition, module ownership and protected-core contracts;
+measurement-bound CFF integration remains open.
+The [function subject producer](docs/NATIVE_FUNCTION_SUBJECTS.md) adds exact closed COFF
+function/fragment ranges, actual native reads and real ICF refusal.
+Its production object emitter also accepts explicit function-section preservation.
+The [authenticated code reference codec](docs/NATIVE_CODE_REFERENCES.md) adds independent
+identity/path-word keys and owned native metadata using the existing archive envelope.
+The [reserved reference slots](docs/NATIVE_REFERENCE_SLOTS.md) add frozen early selections,
+data-only finalization and an exercised private CMake build seam.
+The [owned observation runtime](docs/NATIVE_OBSERVATIONS.md) adds independent caches and
+read-start freshness policies; production stage/CFF integration remains open.
+The private [measured key primitive](docs/NATIVE_MEASURED_KEYS.md) binds complete observations
+into a separate release-key domain. The opt-in Windows measured bootstrap binds actual outer
+code to child release, with phase/lifetime admission and data-only reference/mask finalization.
+The private post-release material adapter preserves an acyclic path toward measured CFF.
+An opt-in two-owner mixed POST path now wires frozen original-edge inputs through
+packaging and parent completion; its independent planner and final PE proof are
+still undergoing worktree integration tests.
+Composable native CFF configuration and coverage: [`docs/NATIVE_RECIPES.md`](docs/NATIVE_RECIPES.md).
+The native recipe also supports opt-in instruction-budget block splitting before CFF states.
+Separate deduplication and typed common-exit normalization retain explicit protection-site links.
+Opt-in opaque choices, safe arithmetic clones, synthesized decoys and reachable arithmetic
+have separate strategies, growth budgets and scoped final-code checks.
+Scalar literal decoding covers i1-i128; a separate optional equality component encodes i2-i128
+constant comparisons under the current CFF state. An opt-in
+[typed archive runtime](docs/NATIVE_ARCHIVE.md) provides AES-GCM records and per-record caches;
+LLVM planning preserves zeroed storage, verifies generated wrappers and binds archive keys
+to CFF states. The demo CMake pipeline can embed binary assets and protect their accessors
+after ordinary O2 optimization. Empty compiler plans preserve optional/required coverage
+semantics, and paired archive costs are documented. Optional state-bound reference tables
+diversify direct function-address/call lookup while retaining ABI and callback identity.
+Typed per-site call frames use internal invokers selected before CFF sealing. Required local
+frame ABIs are retained before source O2. Mixed whole/hybrid-EH callback projects exercise
+cross-state preparation, SDK and protected assets together; broader bootstrap parity remains
+in progress.
+The opt-in G3 archive-origin record replays the selected O2 archive plan and materialization
+from frozen builder inputs and authenticates all 36 existing package records before child
+finalization. A further opt-in proof checks the selected O2 PE wrapper calls, writable
+publication slots, same-slot reads and comparison routes. Both observed O2
+predicate orders are supported and the seed-692 publication/binding combination
+passes on a fresh main build. Runtime decoder effects and general O2 predicate
+equivalence remain unproved.
+
+An explicit three-input O2 predecessor record additionally replays
+`payload.requested.ll` through the selected optimizer and joins its output
+path and bytes to the archive-origin record. Its main seed-692 product and
+focused test pass; C++ source provenance and publisher signing remain outside
+this fixed-builder proof.
+
+The opt-in decoder-linkage check further binds selected `require_record` to
+`acquire_record` and three child calls to exact COFF/PE targets and local
+arguments. Paired call, frame and stack-slot bypasses refuse in the selected
+seed-692 O2/archive product. Decoder/cache effects and cross-state
+reachability remain unverified.
+
+The separate opt-in binding-status check verifies the selected Scope/context pointer,
+generation and availability routes in actual source-none and O2/archive COFF/PE code.
+It rejects overlapping Win64 stack slots and values live in outgoing call shadow space.
+A further opt-in check binds the called `context_availability` closing-field decision
+and lock/unlock call route; the platform lock effect and wider request/callback chain
+remain open. These G3 checks establish builder-controlled consistency for the selected
+products, without distribution signing or runtime loaded-byte authentication.
+The demo now protects marked outer-bootstrap glue in a separate CFF domain. An optional
+[owned context runtime](docs/NATIVE_CONTEXT.md) provides close/admission, scoped publication,
+expected-context identity and callback-provider lifetime. Legacy SDK table snapshots preserve
+their borrowed userdata/code boundary. The demo now hands an owned lease/token across its
+entry ABI and retires it before unloading, including host observer exceptions. Measured
+readiness remains in progress.
+The opt-in [native path-fold component](docs/NATIVE_PATH_FOLD.md) binds explicit whole/hybrid
+sites to runtime CFF state. Four bootstrap events now reconstruct the transient AES key
+through standard SHA-256 and a masked release record; the packer no longer emits a raw key.
+Private per-build event inputs precede compilation, and the
+[release-record tools](docs/NATIVE_RELEASE_RECORDS.md) fill reserved data after linking.
+This is local obfuscation, without device authorization or protection against runtime extraction.
+An optional [native decoy domain](docs/NATIVE_DECOY.md) builds and seals a separately identified
+source image. Named outer-decoy variants now route failures through independent fold/key and
+image ownership. Observed actual-CNG tests check emitted-code faults, erased ownership and
+allocation failures independently of the actual loaded-DLL exception/concurrency tests.
+The [bootstrap acceptance guide](docs/NATIVE_BOOTSTRAP_ACCEPTANCE.md) records startup boundaries
+and the optional isolated build/size/full-release measurement target.
+The [native contribution foundation](docs/NATIVE_CONTRIBUTIONS.md) checks typed transition
+correction arithmetic and source/site policy resolution. A source-only owned-context client
+now acquires derived words from the bootstrap's authenticated immutable snapshot.
+Opt-in [contribution gates](docs/NATIVE_CONTRIBUTION_GATES.md) bind actual owned
+observations into CFF corrections at explicit points or selected retained-input normal edges,
+with count/density requirements and budget refusal, including admitted hybrid EH normal edges
+and explicit branch-only regions. Internal/external framed calls and call preparation preserve
+original invoke/source routes across result replacement. Normalized snapshots retain owned
+routing roles so bogus placement cannot split query/frame boundaries. Clone/synthesis guards
+and exact decoy writes now compose with whole/admitted-hybrid contribution flow; their
+predicate templates also preserve scalar hiding. Integer/equality data rewrites compose with
+whole and admitted hybrid source gates, including normal-preserving removal and original-request
+loss checks. Hybrid constant returns use private typed proofs while exception terminals stay frozen.
+Typed constant archives compose with whole and admitted GNU hybrid gates; warmed data caches
+cannot replace current source acquisition. Closed source IDs remain compiler descriptors during planning.
+Whole common exits, instruction-budget splitting and structural deduplication also compose
+with source acquisition. Automatic deduplication preserves original logical edges and reports
+compatible shared physical acquisitions separately; optional incompatible candidates stay visible.
+The admitted GNU hybrid EH scope also composes with those normalizers and registered frame
+completion chains; original cuts and normal/unwind ownership stay accounted for.
+Indexed locals also compose with GNU hybrid source gates, retaining original stack objects
+and lifetime controls through catch, cleanup, reentrant and concurrent execution.
+Region boundary proofs preserve surrounding code and count
+only selected retained-input edges. Each site can select an ordered subset of owned-material
+sources and bind their actual query results. Other provider classes, remaining component
+compositions and ordinary payload integration remain unfinished.
+The bounded Windows x64 schema4 profile also admits two explicit owned/measured sites.
+Its opt-in linked-image check compares helper routing, domain and owner arguments with
+independently supplied private build input; [the native contribution guide](docs/NATIVE_CONTRIBUTION_GATES.md)
+records the local numeric and dispatcher interval proofs and remaining limits
+on policy authenticity, helper side effects and global reachability.
+The finalizer binds both mixed-provider helper bodies to exact PE unwind bytes
+and rejects direct stack writes outside their frames. It also checks that
+both helpers call the expected binding function before their query routes.
+The binding body, symbol authority, transitive callee and callback effects
+remain outside this local proof.
 
 A source-level **Python control-flow-flattening obfuscator** with an optional, layered
 **Python-layer software-protection stack** (compressing + encrypting packer → control-flow-derived key
@@ -187,10 +309,12 @@ For the full module-by-module map and extension points, see
 ```
 pyobfuscator/
 ├── src/pyobfuscator/      # the package: cff/ (engine) + protect/ (packer) + root API
+├── native/                # source-only C++ SDK, LLVM CFF pass, Windows bootstrap demo
 ├── tests/                 # ~2,255 differential + structural tests
 ├── docs/
 │   ├── OPTIONS.md         # per-option reference (effect / impact / limitations)
-│   └── ARCHITECTURE.md    # module-by-module map + extension points
+│   ├── ARCHITECTURE.md    # module-by-module map + extension points
+│   └── NATIVE.md          # native prototype, build, and current limits
 ├── README.md  /  README.chs.md
 └── pyproject.toml
 ```

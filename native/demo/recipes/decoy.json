@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "domain": "decoy-payload",
+  "markers": {
+    "pyobf.native.cff": {"recipe": "baseline"}
+  }
+}
